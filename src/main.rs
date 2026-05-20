@@ -17,6 +17,10 @@ struct Args {
     /// Archivo de salida Markdown
     #[arg(long, default_value = "consolidado.md")]
     out_md: PathBuf,
+
+    /// Archivo de salida CSV para metadata
+    #[arg(long, default_value = "reporte_tokens.csv")]
+    out_csv: PathBuf,
 }
 
 #[derive(Deserialize, Debug)]
@@ -35,8 +39,35 @@ struct Candidate {
 }
 
 #[derive(Deserialize, Debug)]
+struct TokenDetail {
+    modality: String,
+    #[serde(rename = "tokenCount")]
+    token_count: u32,
+}
+
+#[derive(Deserialize, Debug)]
+struct UsageMetadata {
+    #[serde(rename = "candidatesTokenCount", default)]
+    candidates_token_count: u32,
+    #[serde(rename = "promptTokenCount", default)]
+    prompt_token_count: u32,
+    #[serde(rename = "promptTokensDetails", default)]
+    prompt_tokens_details: Vec<TokenDetail>,
+    #[serde(rename = "thoughtsTokenCount", default)]
+    thoughts_token_count: u32,
+    #[serde(rename = "totalTokenCount", default)]
+    total_token_count: u32,
+    #[serde(rename = "trafficType", default)]
+    traffic_type: String,
+}
+
+#[derive(Deserialize, Debug)]
 struct Response {
     candidates: Option<Vec<Candidate>>,
+    #[serde(rename = "modelVersion")]
+    model_version: String,
+    #[serde(rename = "usageMetadata")]
+    usage_metadata: UsageMetadata,
 }
 
 #[derive(Deserialize, Debug)]
@@ -45,13 +76,26 @@ struct PredictionLine {
     response: Response,
 }
 
+struct ConsolidatedData {
+    key: String,
+    text: String,
+    model: String,
+    traffic_type: String,
+    prompt_image_tokens: u32,
+    prompt_text_tokens: u32,
+    prompt_tokens: u32,
+    candidate_tokens: u32,
+    thoughts_tokens: u32,
+    total_tokens: u32,
+}
+
 fn main() -> io::Result<()> {
     let args = Args::parse();
 
     let file = File::open(&args.input)?;
     let reader = BufReader::new(file);
 
-    let mut predictions: Vec<(String, String)> = Vec::new();
+    let mut data_list: Vec<ConsolidatedData> = Vec::new();
 
     for line in reader.lines() {
         let line = line?;
@@ -72,7 +116,29 @@ fn main() -> io::Result<()> {
                     .unwrap_or_else(|| {
                         format!("> [Aviso: No se encontró texto para la clave `{}`]", pred.key)
                     });
-                predictions.push((pred.key, text));
+
+                let mut image_tokens = 0;
+                let mut text_tokens = 0;
+                for detail in &pred.response.usage_metadata.prompt_tokens_details {
+                    match detail.modality.as_str() {
+                        "IMAGE" => image_tokens += detail.token_count,
+                        "TEXT" => text_tokens += detail.token_count,
+                        _ => {}
+                    }
+                }
+
+                data_list.push(ConsolidatedData {
+                    key: pred.key,
+                    text,
+                    model: pred.response.model_version,
+                    traffic_type: pred.response.usage_metadata.traffic_type,
+                    prompt_image_tokens: image_tokens,
+                    prompt_text_tokens: text_tokens,
+                    prompt_tokens: pred.response.usage_metadata.prompt_token_count,
+                    candidate_tokens: pred.response.usage_metadata.candidates_token_count,
+                    thoughts_tokens: pred.response.usage_metadata.thoughts_token_count,
+                    total_tokens: pred.response.usage_metadata.total_token_count,
+                });
             }
             Err(e) => {
                 eprintln!("Error al parsear línea: {}", e);
@@ -81,21 +147,51 @@ fn main() -> io::Result<()> {
     }
 
     // Ordenar alfabéticamente por la clave
-    predictions.sort_by(|a, b| a.0.cmp(&b.0));
+    data_list.sort_by(|a, b| a.key.cmp(&b.key));
 
     // Generar archivo TXT
     let mut txt_file = File::create(&args.out_txt)?;
-    for (_, text) in &predictions {
-        writeln!(txt_file, "{}\n", text)?;
+    for data in &data_list {
+        writeln!(txt_file, "{}\n", data.text)?;
     }
     println!("Archivo TXT generado: {:?}", args.out_txt);
 
     // Generar archivo MD
     let mut md_file = File::create(&args.out_md)?;
-    for (key, text) in &predictions {
-        writeln!(md_file, "## Clave: {}\n\n{}\n", key, text)?;
+    for data in &data_list {
+        writeln!(md_file, "## Clave: {}\n\n{}\n", data.key, data.text)?;
     }
     println!("Archivo Markdown generado: {:?}", args.out_md);
+
+    // Generar archivo CSV
+    let mut csv_writer = csv::Writer::from_path(&args.out_csv)?;
+    csv_writer.write_record(&[
+        "key",
+        "model",
+        "Traffic Type",
+        "Prompt Image Tokens",
+        "Prompt Text Tokens",
+        "Prompt Tokens",
+        "Candidate Tokens",
+        "Thoughts Tokens",
+        "Total Tokens",
+    ])?;
+
+    for data in &data_list {
+        csv_writer.write_record(&[
+            &data.key,
+            &data.model,
+            &data.traffic_type,
+            &data.prompt_image_tokens.to_string(),
+            &data.prompt_text_tokens.to_string(),
+            &data.prompt_tokens.to_string(),
+            &data.candidate_tokens.to_string(),
+            &data.thoughts_tokens.to_string(),
+            &data.total_tokens.to_string(),
+        ])?;
+    }
+    csv_writer.flush()?;
+    println!("Archivo CSV generado: {:?}", args.out_csv);
 
     Ok(())
 }
