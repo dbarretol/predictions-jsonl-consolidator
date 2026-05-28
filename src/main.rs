@@ -136,6 +136,13 @@ struct Response {
     usage_metadata: UsageMetadata,
 }
 
+#[derive(Debug, Clone)]
+struct RecordEntry {
+    key: String,
+    text_hash: u64,
+    line: String,
+}
+
 #[derive(Deserialize, Debug)]
 struct PredictionLine {
     key: String,
@@ -263,42 +270,51 @@ fn process_directory(dir: &Path, timestamp: &str) -> io::Result<PathBuf> {
     info!("Consolidando {} archivos JSONL...", jsonl_files.len());
     
     // Usamos fold/reduce para mejor paralelismo en lugar de Mutex compartido
-    // Ahora acumulamos (key, hash, line) en un Vec para mantener la consistencia
+    // Ahora acumulamos RecordEntry en un Vec para mantener la consistencia
     let (_, final_records, total_skipped) = jsonl_files.par_iter().fold(
-        || (FxHashSet::<(String, u64)>::default(), Vec::new(), 0usize),
+        || (FxHashSet::<(String, u64)>::default(), Vec::<RecordEntry>::new(), 0usize),
         |(mut seen, mut acc_records, mut skipped), file_path| {
-            if let Ok(file) = File::open(file_path) {
-                let reader = BufReader::new(file);
-                for line in reader.lines() {
-                    if let Ok(line) = line {
-                        let trimmed = line.trim();
-                        if trimmed.is_empty() {
-                            continue;
-                        }
-
-                        // Intentamos parsear la línea para extraer key y texto
-                        if let Ok(pred) = serde_json::from_str::<PredictionLine>(trimmed) {
-                            let text = pred.extract_text().unwrap_or("");
-                            let text_hash = fxhash::hash64(text.as_bytes());
-                            
-                            if seen.insert((pred.key.clone(), text_hash)) {
-                                acc_records.push((pred.key, text_hash, trimmed.to_string()));
+            match File::open(file_path) {
+                Ok(file) => {
+                    let reader = BufReader::new(file);
+                    for line in reader.lines() {
+                        if let Ok(line) = line {
+                            let trimmed = line.trim();
+                            if trimmed.is_empty() {
+                                continue;
                             }
-                        } else {
-                            error!("No se pudo parsear registro en archivo {:?}: {}", file_path, trimmed.chars().take(50).collect::<String>());
-                            skipped += 1;
+
+                            // Intentamos parsear la línea para extraer key y texto
+                            if let Ok(pred) = serde_json::from_str::<PredictionLine>(trimmed) {
+                                let text = pred.extract_text().unwrap_or("");
+                                let text_hash = fxhash::hash64(text.as_bytes());
+                                
+                                if seen.insert((pred.key.clone(), text_hash)) {
+                                    acc_records.push(RecordEntry {
+                                        key: pred.key,
+                                        text_hash,
+                                        line: trimmed.to_string(),
+                                    });
+                                }
+                            } else {
+                                error!("No se pudo parsear registro en archivo {:?}: {}", file_path, trimmed.chars().take(50).collect::<String>());
+                                skipped += 1;
+                            }
                         }
                     }
+                }
+                Err(e) => {
+                    error!("No se pudo abrir archivo {:?}: {}", file_path, e);
                 }
             }
             (seen, acc_records, skipped)
         }
     ).reduce(
-        || (FxHashSet::<(String, u64)>::default(), Vec::new(), 0usize),
+        || (FxHashSet::<(String, u64)>::default(), Vec::<RecordEntry>::new(), 0usize),
         |(mut acc_seen, mut acc_records, mut acc_skipped), (_seen, records, skipped)| {
-            for (key, hash, line) in records {
-                if acc_seen.insert((key.clone(), hash)) {
-                    acc_records.push((key, hash, line));
+            for entry in records {
+                if acc_seen.insert((entry.key.clone(), entry.text_hash)) {
+                    acc_records.push(entry);
                 }
             }
             acc_skipped += skipped;
@@ -311,8 +327,8 @@ fn process_directory(dir: &Path, timestamp: &str) -> io::Result<PathBuf> {
     }
 
     let mut records = Vec::new();
-    for (key, _hash, line) in final_records {
-        records.push((key, line));
+    for entry in final_records {
+        records.push((entry.key, entry.line));
     }
 
     // Ordenar por clave usando orden natural (numérico consciente)
