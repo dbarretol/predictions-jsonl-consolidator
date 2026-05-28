@@ -1,10 +1,12 @@
 use chrono::Local;
 use clap::Parser;
 use fxhash::FxHashSet;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use tracing::{error, info};
 
 // ... (other structs)
@@ -243,27 +245,32 @@ fn process_directory(dir: &Path, timestamp: &str) -> io::Result<PathBuf> {
         return Ok(jsonl_files[0].clone());
     }
 
-    println!("Consolidando {} archivos JSONL...", jsonl_files.len());
+    info!("Consolidando {} archivos JSONL...", jsonl_files.len());
     
-    let mut seen_hashes: FxHashSet<u64> = FxHashSet::default();
-    let mut unique_lines = Vec::new();
-    for file_path in &jsonl_files {
-        let file = File::open(file_path)?;
-        let reader = BufReader::new(file);
-        for line in reader.lines() {
-            let line = line?;
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            
-            let hash = fxhash::hash64(trimmed.as_bytes());
-            if seen_hashes.insert(hash) {
-                unique_lines.push(trimmed.to_string());
+    let seen_hashes = Mutex::new(FxHashSet::<u64>::default());
+    let unique_lines = Mutex::new(Vec::new());
+
+    jsonl_files.par_iter().for_each(|file_path| {
+        if let Ok(file) = File::open(file_path) {
+            let reader = BufReader::new(file);
+            for line in reader.lines() {
+                if let Ok(line) = line {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    
+                    let hash = fxhash::hash64(trimmed.as_bytes());
+                    let mut hashes = seen_hashes.lock().unwrap();
+                    if hashes.insert(hash) {
+                        unique_lines.lock().unwrap().push(trimmed.to_string());
+                    }
+                }
             }
         }
-    }
+    });
 
+    let unique_lines = unique_lines.into_inner().unwrap();
     let mut records = Vec::new();
     for line in unique_lines {
         if let Ok(key_only) = serde_json::from_str::<KeyOnly>(&line) {
