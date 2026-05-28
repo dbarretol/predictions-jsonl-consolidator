@@ -141,7 +141,7 @@ fn main() -> io::Result<()> {
         ));
     };
 
-    let input_dir = input_path.parent().unwrap_or(Path::new("."));
+    let input_dir = input_path.parent().unwrap_or_else(|| Path::new("."));
     let extract_dir = input_dir.join("jsonl_extract");
 
     if !extract_dir.exists() {
