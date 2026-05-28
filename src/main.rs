@@ -268,7 +268,8 @@ fn process_directory(dir: &Path, timestamp: &str) -> io::Result<PathBuf> {
 
     info!("Consolidando {} archivos JSONL...", jsonl_files.len());
     
-    let seen_hashes = Mutex::new(FxHashSet::<u64>::default());
+    // Usamos un conjunto de (key, hash_del_texto) para garantizar unicidad real
+    let seen_records = Mutex::new(FxHashSet::<(String, u64)>::default());
     let unique_lines = Mutex::new(Vec::new());
 
     jsonl_files.par_iter().for_each(|file_path| {
@@ -280,11 +281,24 @@ fn process_directory(dir: &Path, timestamp: &str) -> io::Result<PathBuf> {
                     if trimmed.is_empty() {
                         continue;
                     }
-                    
-                    let hash = fxhash::hash64(trimmed.as_bytes());
-                    let mut hashes = seen_hashes.lock().unwrap();
-                    if hashes.insert(hash) {
-                        unique_lines.lock().unwrap().push(trimmed.to_string());
+
+                    // Intentamos parsear la línea para extraer key y texto
+                    if let Ok(pred) = serde_json::from_str::<PredictionLine>(trimmed) {
+                        let text = pred.extract_text().unwrap_or("");
+                        let text_hash = fxhash::hash64(text.as_bytes());
+                        
+                        let mut records = seen_records.lock().unwrap();
+                        if records.insert((pred.key, text_hash)) {
+                            unique_lines.lock().unwrap().push(trimmed.to_string());
+                        }
+                    } else {
+                        // Si no podemos parsear, tratamos como línea única para no perder datos
+                        let hash = fxhash::hash64(trimmed.as_bytes());
+                        let mut records = seen_records.lock().unwrap();
+                        // Usamos un valor dummy para la key si no se pudo parsear
+                        if records.insert(("__invalid_key__".to_string(), hash)) {
+                            unique_lines.lock().unwrap().push(trimmed.to_string());
+                        }
                     }
                 }
             }
