@@ -244,7 +244,13 @@ fn process_directory(dir: &Path, timestamp: &str) -> io::Result<PathBuf> {
         let entry = entry?;
         let path = entry.path();
         if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("jsonl") {
-            jsonl_files.push(path);
+            let filename = path.file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+
+            if !filename.starts_with("consolidated_") {
+                jsonl_files.push(path);
+            }
         }
     }
 
