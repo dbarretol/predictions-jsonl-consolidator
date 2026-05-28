@@ -87,19 +87,6 @@ struct KeyOnly {
     key: String,
 }
 
-struct ConsolidatedData {
-    key: String,
-    text: String,
-    model: String,
-    traffic_type: String,
-    prompt_image_tokens: u32,
-    prompt_text_tokens: u32,
-    prompt_tokens: u32,
-    candidate_tokens: u32,
-    thoughts_tokens: u32,
-    total_tokens: u32,
-}
-
 impl PredictionLine {
     fn extract_text(&self) -> Option<&str> {
         self.response
@@ -147,10 +134,26 @@ fn main() -> io::Result<()> {
         extract_dir.join(format!("reporte_tokens_{}.csv", timestamp))
     });
 
+    // Abrir archivos de salida para streaming
+    let mut txt_file = File::create(&out_txt_path)?;
+    let mut md_file = File::create(&out_md_path)?;
+    let mut csv_writer = csv::Writer::from_path(&out_csv_path)?;
+
+    // Escribir cabecera CSV
+    csv_writer.write_record(&[
+        "key",
+        "model",
+        "Traffic Type",
+        "Prompt Image Tokens",
+        "Prompt Text Tokens",
+        "Prompt Tokens",
+        "Candidate Tokens",
+        "Thoughts Tokens",
+        "Total Tokens",
+    ])?;
+
     let file = File::open(&input_path)?;
     let reader = BufReader::new(file);
-
-    let mut data_list: Vec<ConsolidatedData> = Vec::new();
 
     for (idx, line) in reader.lines().enumerate() {
         let line = line?;
@@ -162,11 +165,9 @@ fn main() -> io::Result<()> {
             Ok(pred) => {
                 let text = pred
                     .extract_text()
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| {
-                        format!("> [Aviso: No se encontró texto para la clave `{}`]", pred.key)
-                    });
-
+                    .unwrap_or("...");
+                
+                // Procesar tokens
                 let mut image_tokens = 0;
                 let mut text_tokens = 0;
                 for detail in &pred.response.usage_metadata.prompt_tokens_details {
@@ -177,18 +178,20 @@ fn main() -> io::Result<()> {
                     }
                 }
 
-                data_list.push(ConsolidatedData {
-                    key: pred.key,
-                    text,
-                    model: pred.response.model_version,
-                    traffic_type: pred.response.usage_metadata.traffic_type,
-                    prompt_image_tokens: image_tokens,
-                    prompt_text_tokens: text_tokens,
-                    prompt_tokens: pred.response.usage_metadata.prompt_token_count,
-                    candidate_tokens: pred.response.usage_metadata.candidates_token_count,
-                    thoughts_tokens: pred.response.usage_metadata.thoughts_token_count,
-                    total_tokens: pred.response.usage_metadata.total_token_count,
-                });
+                // Streaming a los archivos de salida
+                writeln!(txt_file, "{}\n", text)?;
+                writeln!(md_file, "## Clave: {}\n\n{}\n", pred.key, text)?;
+                csv_writer.write_record(&[
+                    &pred.key,
+                    &pred.response.model_version,
+                    &pred.response.usage_metadata.traffic_type,
+                    &image_tokens.to_string(),
+                    &text_tokens.to_string(),
+                    &pred.response.usage_metadata.prompt_token_count.to_string(),
+                    &pred.response.usage_metadata.candidates_token_count.to_string(),
+                    &pred.response.usage_metadata.thoughts_token_count.to_string(),
+                    &pred.response.usage_metadata.total_token_count.to_string(),
+                ])?;
             }
             Err(e) => {
                 eprintln!(
@@ -200,13 +203,9 @@ fn main() -> io::Result<()> {
             }
         }
     }
-
-    // Ordenar alfabéticamente por la clave
-    data_list.sort_by(|a, b| a.key.cmp(&b.key));
-
-    generate_txt(&out_txt_path, &data_list)?;
-    generate_md(&out_md_path, &data_list)?;
-    generate_csv(&out_csv_path, &data_list)?;
+    
+    csv_writer.flush()?;
+    println!("Archivos generados en: {:?}", extract_dir);
 
     Ok(())
 }
@@ -234,6 +233,11 @@ fn process_directory(dir: &Path, timestamp: &str) -> io::Result<PathBuf> {
     }
 
     println!("Consolidando {} archivos JSONL...", jsonl_files.len());
+    
+    // Para consolidar y ordenar necesitamos cargar en memoria las líneas para ordenar
+    // Como las líneas son pequeñas, esto suele ser aceptable, pero si el volumen es masivo
+    // se requeriría un algoritmo de ordenamiento externo (ordenar trozos en disco).
+    // Dada la naturaleza de los archivos OCR, asumiremos que esto cabe en memoria.
     let mut unique_lines = HashSet::new();
     for file_path in &jsonl_files {
         let file = File::open(file_path)?;
@@ -268,54 +272,4 @@ fn process_directory(dir: &Path, timestamp: &str) -> io::Result<PathBuf> {
 
     println!("Archivo consolidado generado: {:?}", consolidated_path);
     Ok(consolidated_path)
-}
-
-fn generate_txt(path: &Path, data_list: &[ConsolidatedData]) -> io::Result<()> {
-    let mut txt_file = File::create(path)?;
-    for data in data_list {
-        writeln!(txt_file, "{}\n", data.text)?;
-    }
-    println!("Archivo TXT generado: {:?}", path);
-    Ok(())
-}
-
-fn generate_md(path: &Path, data_list: &[ConsolidatedData]) -> io::Result<()> {
-    let mut md_file = File::create(path)?;
-    for data in data_list {
-        writeln!(md_file, "## Clave: {}\n\n{}\n", data.key, data.text)?;
-    }
-    println!("Archivo Markdown generado: {:?}", path);
-    Ok(())
-}
-
-fn generate_csv(path: &Path, data_list: &[ConsolidatedData]) -> io::Result<()> {
-    let mut csv_writer = csv::Writer::from_path(path)?;
-    csv_writer.write_record(&[
-        "key",
-        "model",
-        "Traffic Type",
-        "Prompt Image Tokens",
-        "Prompt Text Tokens",
-        "Prompt Tokens",
-        "Candidate Tokens",
-        "Thoughts Tokens",
-        "Total Tokens",
-    ])?;
-
-    for data in data_list {
-        csv_writer.write_record(&[
-            &data.key,
-            &data.model,
-            &data.traffic_type,
-            &data.prompt_image_tokens.to_string(),
-            &data.prompt_text_tokens.to_string(),
-            &data.prompt_tokens.to_string(),
-            &data.candidate_tokens.to_string(),
-            &data.thoughts_tokens.to_string(),
-            &data.total_tokens.to_string(),
-        ])?;
-    }
-    csv_writer.flush()?;
-    println!("Archivo CSV generado: {:?}", path);
-    Ok(())
 }
