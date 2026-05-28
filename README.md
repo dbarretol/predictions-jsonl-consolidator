@@ -37,9 +37,16 @@ Puedes ejecutar el proyecto directamente usando `cargo`:
 cargo run -- <RUTA_AL_ARCHIVO_JSONL> [OPCIONES]
 ```
 
+### Comportamiento por defecto
+Si solo proporcionas la ruta del archivo JSONL, el programa creará automáticamente una carpeta llamada `jsonl_extract` en el mismo directorio donde se encuentra el archivo de entrada y guardará allí los archivos `consolidado.txt`, `consolidado.md` y `reporte_tokens.csv`.
+
 ### Ejemplo de uso:
 
 ```powershell
+# Uso automático (crea carpeta jsonl_extract en example/)
+cargo run -- example/predictions.jsonl
+
+# Con parámetros personalizados
 cargo run -- example/predictions.jsonl --out-txt resultado.txt --out-md resultado.md --out-csv reporte.csv
 ```
 
@@ -48,9 +55,9 @@ cargo run -- example/predictions.jsonl --out-txt resultado.txt --out-md resultad
 | Parámetro | Descripción | Valor por defecto |
 | :--- | :--- | :--- |
 | `input` | **(Requerido)** Ruta al archivo `.jsonl` de entrada. | N/A |
-| `--out-txt` | Nombre del archivo de texto consolidado. | `consolidado.txt` |
-| `--out-md` | Nombre del archivo Markdown estructurado. | `consolidado.md` |
-| `--out-csv` | Nombre del archivo CSV con el reporte de tokens. | `reporte_tokens.csv` |
+| `--out-txt` | Ruta personalizada para el archivo TXT. | `[dir_input]/jsonl_extract/consolidado.txt` |
+| `--out-md` | Ruta personalizada para el archivo Markdown. | `[dir_input]/jsonl_extract/consolidado.md` |
+| `--out-csv` | Ruta personalizada para el archivo CSV. | `[dir_input]/jsonl_extract/reporte_tokens.csv` |
 | `-h, --help` | Muestra la ayuda del programa. | N/A |
 | `-V, --version` | Muestra la versión del programa. | N/A |
 

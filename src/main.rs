@@ -1,8 +1,8 @@
 use clap::Parser;
 use serde::Deserialize;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -11,16 +11,16 @@ struct Args {
     input: PathBuf,
 
     /// Archivo de salida TXT
-    #[arg(long, default_value = "consolidado.txt")]
-    out_txt: PathBuf,
+    #[arg(long)]
+    out_txt: Option<PathBuf>,
 
     /// Archivo de salida Markdown
-    #[arg(long, default_value = "consolidado.md")]
-    out_md: PathBuf,
+    #[arg(long)]
+    out_md: Option<PathBuf>,
 
     /// Archivo de salida CSV para metadata
-    #[arg(long, default_value = "reporte_tokens.csv")]
-    out_csv: PathBuf,
+    #[arg(long)]
+    out_csv: Option<PathBuf>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -92,7 +92,28 @@ struct ConsolidatedData {
 fn main() -> io::Result<()> {
     let args = Args::parse();
 
-    let file = File::open(&args.input)?;
+    // Determinar la carpeta de extracción automática
+    let input_path = &args.input;
+    let input_dir = input_path.parent().unwrap_or(Path::new("."));
+    let extract_dir = input_dir.join("jsonl_extract");
+
+    // Función auxiliar para resolver rutas de salida
+    let resolve_output = |opt: Option<PathBuf>, default_name: &str, create_dir: &Path| -> io::Result<PathBuf> {
+        if let Some(p) = opt {
+            Ok(p)
+        } else {
+            if !create_dir.exists() {
+                fs::create_dir_all(create_dir)?;
+            }
+            Ok(create_dir.join(default_name))
+        }
+    };
+
+    let out_txt_path = resolve_output(args.out_txt, "consolidado.txt", &extract_dir)?;
+    let out_md_path = resolve_output(args.out_md, "consolidado.md", &extract_dir)?;
+    let out_csv_path = resolve_output(args.out_csv, "reporte_tokens.csv", &extract_dir)?;
+
+    let file = File::open(input_path)?;
     let reader = BufReader::new(file);
 
     let mut data_list: Vec<ConsolidatedData> = Vec::new();
@@ -150,21 +171,21 @@ fn main() -> io::Result<()> {
     data_list.sort_by(|a, b| a.key.cmp(&b.key));
 
     // Generar archivo TXT
-    let mut txt_file = File::create(&args.out_txt)?;
+    let mut txt_file = File::create(&out_txt_path)?;
     for data in &data_list {
         writeln!(txt_file, "{}\n", data.text)?;
     }
-    println!("Archivo TXT generado: {:?}", args.out_txt);
+    println!("Archivo TXT generado: {:?}", out_txt_path);
 
     // Generar archivo MD
-    let mut md_file = File::create(&args.out_md)?;
+    let mut md_file = File::create(&out_md_path)?;
     for data in &data_list {
         writeln!(md_file, "## Clave: {}\n\n{}\n", data.key, data.text)?;
     }
-    println!("Archivo Markdown generado: {:?}", args.out_md);
+    println!("Archivo Markdown generado: {:?}", out_md_path);
 
     // Generar archivo CSV
-    let mut csv_writer = csv::Writer::from_path(&args.out_csv)?;
+    let mut csv_writer = csv::Writer::from_path(&out_csv_path)?;
     csv_writer.write_record(&[
         "key",
         "model",
@@ -191,7 +212,7 @@ fn main() -> io::Result<()> {
         ])?;
     }
     csv_writer.flush()?;
-    println!("Archivo CSV generado: {:?}", args.out_csv);
+    println!("Archivo CSV generado: {:?}", out_csv_path);
 
     Ok(())
 }
