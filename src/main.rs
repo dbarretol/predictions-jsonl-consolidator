@@ -152,7 +152,7 @@ fn main() -> io::Result<()> {
 
     let mut data_list: Vec<ConsolidatedData> = Vec::new();
 
-    for line in reader.lines() {
+    for (idx, line) in reader.lines().enumerate() {
         let line = line?;
         if line.trim().is_empty() {
             continue;
@@ -191,7 +191,12 @@ fn main() -> io::Result<()> {
                 });
             }
             Err(e) => {
-                eprintln!("Error al parsear línea: {}", e);
+                eprintln!(
+                    "Error parseando línea {}: {}\nContenido: {}",
+                    idx + 1,
+                    e,
+                    &line[..line.len().min(120)]
+                );
             }
         }
     }
