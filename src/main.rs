@@ -148,11 +148,10 @@ fn main() -> io::Result<()> {
                 let text = pred
                     .response
                     .candidates
-                    .as_ref()
-                    .and_then(|c| c.get(0))
-                    .and_then(|c| c.content.parts.as_ref())
-                    .and_then(|p| p.get(0))
-                    .and_then(|p| p.text.clone())
+                    .and_then(|mut c| c.pop())
+                    .and_then(|c| c.content.parts)
+                    .and_then(|mut p| p.pop())
+                    .and_then(|p| p.text)
                     .unwrap_or_else(|| {
                         format!("> [Aviso: No se encontró texto para la clave `{}`]", pred.key)
                     });
