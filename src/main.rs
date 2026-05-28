@@ -103,7 +103,7 @@ enum TrafficType {
     #[default]
     #[serde(rename = "regular")]
     Regular,
-    #[serde(rename = "onDemand")]
+    #[serde(rename = "ON_DEMAND")]
     OnDemand,
     #[serde(rename = "batch")]
     Batch,
@@ -200,7 +200,9 @@ fn main() -> io::Result<()> {
     // Abrir archivos de salida para streaming
     let mut txt_file = File::create(&out_txt_path)?;
     let mut md_file = File::create(&out_md_path)?;
-    let mut csv_writer = csv::Writer::from_path(&out_csv_path)?;
+    
+    // Lista para acumular reportes y ordenarlos antes de escribir el CSV
+    let mut token_reports = Vec::new();
 
     let file = File::open(&input_path)?;
     let reader = BufReader::new(file);
@@ -220,7 +222,9 @@ fn main() -> io::Result<()> {
                 // Streaming a los archivos de salida
                 writeln!(txt_file, "{}\n", text)?;
                 writeln!(md_file, "## Clave: {}\n\n{}\n", pred.key, text)?;
-                csv_writer.serialize(TokenReport::from(pred))?;
+                
+                // Acumular reporte
+                token_reports.push(TokenReport::from(pred));
             }
             Err(e) => {
                 error!(
@@ -233,7 +237,16 @@ fn main() -> io::Result<()> {
         }
     }
     
+    // Ordenar reportes por clave usando orden natural
+    token_reports.sort_by(|a, b| natord::compare(&a.key, &b.key));
+
+    // Escribir CSV ordenado
+    let mut csv_writer = csv::Writer::from_path(&out_csv_path)?;
+    for report in token_reports {
+        csv_writer.serialize(report)?;
+    }
     csv_writer.flush()?;
+    
     info!("Archivos generados en: {:?}", extract_dir);
 
     Ok(())
