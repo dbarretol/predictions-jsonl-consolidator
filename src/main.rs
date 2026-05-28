@@ -1,7 +1,7 @@
 use chrono::Local;
 use clap::Parser;
+use fxhash::FxHashSet;
 use serde::Deserialize;
-use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -234,19 +234,21 @@ fn process_directory(dir: &Path, timestamp: &str) -> io::Result<PathBuf> {
 
     println!("Consolidando {} archivos JSONL...", jsonl_files.len());
     
-    // Para consolidar y ordenar necesitamos cargar en memoria las líneas para ordenar
-    // Como las líneas son pequeñas, esto suele ser aceptable, pero si el volumen es masivo
-    // se requeriría un algoritmo de ordenamiento externo (ordenar trozos en disco).
-    // Dada la naturaleza de los archivos OCR, asumiremos que esto cabe en memoria.
-    let mut unique_lines = HashSet::new();
+    let mut seen_hashes: FxHashSet<u64> = FxHashSet::default();
+    let mut unique_lines = Vec::new();
     for file_path in &jsonl_files {
         let file = File::open(file_path)?;
         let reader = BufReader::new(file);
         for line in reader.lines() {
             let line = line?;
             let trimmed = line.trim();
-            if !trimmed.is_empty() {
-                unique_lines.insert(trimmed.to_string());
+            if trimmed.is_empty() {
+                continue;
+            }
+            
+            let hash = fxhash::hash64(trimmed.as_bytes());
+            if seen_hashes.insert(hash) {
+                unique_lines.push(trimmed.to_string());
             }
         }
     }
