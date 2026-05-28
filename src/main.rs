@@ -9,8 +9,31 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tracing::{error, info};
 
-// ... (other structs)
+impl From<PredictionLine> for TokenReport {
+    fn from(pred: PredictionLine) -> Self {
+        let mut image_tokens = 0;
+        let mut text_tokens = 0;
+        for detail in &pred.response.usage_metadata.prompt_tokens_details {
+            match detail.modality.as_str() {
+                "IMAGE" => image_tokens += detail.token_count,
+                "TEXT" => text_tokens += detail.token_count,
+                _ => {}
+            }
+        }
 
+        TokenReport {
+            key: pred.key,
+            model: pred.response.model_version,
+            traffic_type: pred.response.usage_metadata.traffic_type,
+            prompt_image_tokens: image_tokens,
+            prompt_text_tokens: text_tokens,
+            prompt_tokens: pred.response.usage_metadata.prompt_token_count,
+            candidate_tokens: pred.response.usage_metadata.candidates_token_count,
+            thoughts_tokens: pred.response.usage_metadata.thoughts_token_count,
+            total_tokens: pred.response.usage_metadata.total_token_count,
+        }
+    }
+}
 #[derive(Serialize)]
 struct TokenReport {
     key: String,
@@ -193,31 +216,10 @@ fn main() -> io::Result<()> {
                     .extract_text()
                     .unwrap_or("...");
                 
-                // Procesar tokens
-                let mut image_tokens = 0;
-                let mut text_tokens = 0;
-                for detail in &pred.response.usage_metadata.prompt_tokens_details {
-                    match detail.modality.as_str() {
-                        "IMAGE" => image_tokens += detail.token_count,
-                        "TEXT" => text_tokens += detail.token_count,
-                        _ => {}
-                    }
-                }
-
                 // Streaming a los archivos de salida
                 writeln!(txt_file, "{}\n", text)?;
                 writeln!(md_file, "## Clave: {}\n\n{}\n", pred.key, text)?;
-                csv_writer.serialize(TokenReport {
-                    key: pred.key,
-                    model: pred.response.model_version,
-                    traffic_type: pred.response.usage_metadata.traffic_type,
-                    prompt_image_tokens: image_tokens,
-                    prompt_text_tokens: text_tokens,
-                    prompt_tokens: pred.response.usage_metadata.prompt_token_count,
-                    candidate_tokens: pred.response.usage_metadata.candidates_token_count,
-                    thoughts_tokens: pred.response.usage_metadata.thoughts_token_count,
-                    total_tokens: pred.response.usage_metadata.total_token_count,
-                })?;
+                csv_writer.serialize(TokenReport::from(pred))?;
             }
             Err(e) => {
                 error!(
