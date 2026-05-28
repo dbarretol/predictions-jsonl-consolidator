@@ -5,6 +5,7 @@ use serde::Deserialize;
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use tracing::{error, info};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -103,6 +104,7 @@ impl PredictionLine {
 }
 
 fn main() -> io::Result<()> {
+    tracing_subscriber::fmt::init();
     let args = Args::parse();
     let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
 
@@ -194,18 +196,18 @@ fn main() -> io::Result<()> {
                 ])?;
             }
             Err(e) => {
-                eprintln!(
-                    "Error parseando línea {}: {}\nContenido: {}",
-                    idx + 1,
-                    e,
-                    &line[..line.len().min(120)]
+                error!(
+                    line = idx + 1,
+                    error = %e,
+                    content = %&line[..line.len().min(120)],
+                    "Error parseando línea"
                 );
             }
         }
     }
     
     csv_writer.flush()?;
-    println!("Archivos generados en: {:?}", extract_dir);
+    info!("Archivos generados en: {:?}", extract_dir);
 
     Ok(())
 }
