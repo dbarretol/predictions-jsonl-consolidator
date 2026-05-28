@@ -142,11 +142,6 @@ struct PredictionLine {
     response: Response,
 }
 
-#[derive(Deserialize)]
-struct KeyOnly {
-    key: String,
-}
-
 impl PredictionLine {
     fn extract_text(&self) -> Option<&str> {
         self.response
@@ -268,9 +263,10 @@ fn process_directory(dir: &Path, timestamp: &str) -> io::Result<PathBuf> {
     info!("Consolidando {} archivos JSONL...", jsonl_files.len());
     
     // Usamos fold/reduce para mejor paralelismo en lugar de Mutex compartido
-    let (_, unique_lines, total_skipped) = jsonl_files.par_iter().fold(
+    // Ahora acumulamos (key, hash, line) en un Vec para mantener la consistencia
+    let (_, final_records, total_skipped) = jsonl_files.par_iter().fold(
         || (FxHashSet::<(String, u64)>::default(), Vec::new(), 0usize),
-        |(mut records, mut lines, mut skipped), file_path| {
+        |(mut seen, mut acc_records, mut skipped), file_path| {
             if let Ok(file) = File::open(file_path) {
                 let reader = BufReader::new(file);
                 for line in reader.lines() {
@@ -285,8 +281,8 @@ fn process_directory(dir: &Path, timestamp: &str) -> io::Result<PathBuf> {
                             let text = pred.extract_text().unwrap_or("");
                             let text_hash = fxhash::hash64(text.as_bytes());
                             
-                            if records.insert((pred.key.clone(), text_hash)) {
-                                lines.push(trimmed.to_string());
+                            if seen.insert((pred.key.clone(), text_hash)) {
+                                acc_records.push((pred.key, text_hash, trimmed.to_string()));
                             }
                         } else {
                             error!("No se pudo parsear registro en archivo {:?}: {}", file_path, trimmed.chars().take(50).collect::<String>());
@@ -295,18 +291,18 @@ fn process_directory(dir: &Path, timestamp: &str) -> io::Result<PathBuf> {
                     }
                 }
             }
-            (records, lines, skipped)
+            (seen, acc_records, skipped)
         }
     ).reduce(
         || (FxHashSet::<(String, u64)>::default(), Vec::new(), 0usize),
-        |(mut acc_records, mut acc_lines, mut acc_skipped), (records, lines, skipped)| {
-            for ((key, hash), line) in records.into_iter().zip(lines.into_iter()) {
-                if acc_records.insert((key, hash)) {
-                    acc_lines.push(line);
+        |(mut acc_seen, mut acc_records, mut acc_skipped), (_seen, records, skipped)| {
+            for (key, hash, line) in records {
+                if acc_seen.insert((key.clone(), hash)) {
+                    acc_records.push((key, hash, line));
                 }
             }
             acc_skipped += skipped;
-            (acc_records, acc_lines, acc_skipped)
+            (acc_seen, acc_records, acc_skipped)
         }
     );
 
@@ -315,12 +311,8 @@ fn process_directory(dir: &Path, timestamp: &str) -> io::Result<PathBuf> {
     }
 
     let mut records = Vec::new();
-    for line in unique_lines {
-        if let Ok(key_only) = serde_json::from_str::<KeyOnly>(&line) {
-            records.push((key_only.key, line));
-        } else {
-            records.push(("".to_string(), line));
-        }
+    for (key, _hash, line) in final_records {
+        records.push((key, line));
     }
 
     // Ordenar por clave usando orden natural (numérico consciente)
