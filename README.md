@@ -34,30 +34,37 @@ El binario resultante se encontrará en `target/release/predictions-jsonl-consol
 Puedes ejecutar el proyecto directamente usando `cargo`:
 
 ```powershell
+# Para un archivo individual:
 cargo run -- <RUTA_AL_ARCHIVO_JSONL> [OPCIONES]
+
+# Para consolidar una carpeta completa de archivos JSONL:
+cargo run -- --dir <RUTA_A_LA_CARPETA> [OPCIONES]
 ```
 
 ### Comportamiento por defecto
-Si solo proporcionas la ruta del archivo JSONL, el programa creará automáticamente una carpeta llamada `jsonl_extract` en el mismo directorio donde se encuentra el archivo de entrada y guardará allí los archivos `consolidado.txt`, `consolidado.md` y `reporte_tokens.csv`.
+- **Archivo individual**: Crea una carpeta llamada `jsonl_extract` en el mismo directorio donde se encuentra el archivo de entrada.
+- **Carpeta (--dir)**: Consolida todos los `.jsonl` encontrados en un archivo `consolidated_YYYYMMDD_HHMMSS.jsonl` en la carpeta indicada, y genera los reportes en una subcarpeta `jsonl_extract`.
+- **Nombres de archivo**: Todos los archivos generados (`.jsonl` consolidado, `.txt`, `.md`, `.csv`) incluyen un timestamp (`YYYYMMDD_HHMMSS`) para evitar sobreescrituras.
 
 ### Ejemplo de uso:
 
 ```powershell
-# Uso automático (crea carpeta jsonl_extract en example/)
-cargo run -- example/predictions.jsonl
+# Uso automático en una carpeta:
+cargo run -- --dir ./data
 
-# Con parámetros personalizados
-cargo run -- example/predictions.jsonl --out-txt resultado.txt --out-md resultado.md --out-csv reporte.csv
+# Uso automático con un archivo:
+cargo run -- example/predictions.jsonl
 ```
 
 ## Parámetros y Opciones
 
 | Parámetro | Descripción | Valor por defecto |
 | :--- | :--- | :--- |
-| `input` | **(Requerido)** Ruta al archivo `.jsonl` de entrada. | N/A |
-| `--out-txt` | Ruta personalizada para el archivo TXT. | `[dir_input]/jsonl_extract/consolidado.txt` |
-| `--out-md` | Ruta personalizada para el archivo Markdown. | `[dir_input]/jsonl_extract/consolidado.md` |
-| `--out-csv` | Ruta personalizada para el archivo CSV. | `[dir_input]/jsonl_extract/reporte_tokens.csv` |
+| `input` | Ruta al archivo `.jsonl` de entrada. | N/A |
+| `--dir, -d` | Carpeta para buscar y consolidar archivos `.jsonl`. | N/A |
+| `--out-txt` | Ruta personalizada para el archivo TXT. | `[dir_input]/jsonl_extract/consolidado_[TS].txt` |
+| `--out-md` | Ruta personalizada para el archivo Markdown. | `[dir_input]/jsonl_extract/consolidado_[TS].md` |
+| `--out-csv` | Ruta personalizada para el archivo CSV. | `[dir_input]/jsonl_extract/reporte_tokens_[TS].csv` |
 | `-h, --help` | Muestra la ayuda del programa. | N/A |
 | `-V, --version` | Muestra la versión del programa. | N/A |
 

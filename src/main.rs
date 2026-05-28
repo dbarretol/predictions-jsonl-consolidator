@@ -1,5 +1,7 @@
+use chrono::Local;
 use clap::Parser;
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -7,18 +9,22 @@ use std::path::{Path, PathBuf};
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Archivo JSONL de entrada
-    input: PathBuf,
+    /// Archivo JSONL de entrada (opcional si se usa --dir)
+    input: Option<PathBuf>,
 
-    /// Archivo de salida TXT
+    /// Carpeta para buscar y consolidar archivos JSONL
+    #[arg(long, short)]
+    dir: Option<PathBuf>,
+
+    /// Archivo de salida TXT (opcional, se genera con timestamp por defecto)
     #[arg(long)]
     out_txt: Option<PathBuf>,
 
-    /// Archivo de salida Markdown
+    /// Archivo de salida Markdown (opcional, se genera con timestamp por defecto)
     #[arg(long)]
     out_md: Option<PathBuf>,
 
-    /// Archivo de salida CSV para metadata
+    /// Archivo de salida CSV para metadata (opcional, se genera con timestamp por defecto)
     #[arg(long)]
     out_csv: Option<PathBuf>,
 }
@@ -76,6 +82,11 @@ struct PredictionLine {
     response: Response,
 }
 
+#[derive(Deserialize)]
+struct KeyOnly {
+    key: String,
+}
+
 struct ConsolidatedData {
     key: String,
     text: String,
@@ -91,29 +102,37 @@ struct ConsolidatedData {
 
 fn main() -> io::Result<()> {
     let args = Args::parse();
+    let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
 
-    // Determinar la carpeta de extracción automática
-    let input_path = &args.input;
+    let input_path = if let Some(dir) = &args.dir {
+        process_directory(dir, &timestamp)?
+    } else if let Some(input) = args.input {
+        input
+    } else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Debe proporcionar un archivo de entrada o una carpeta con --dir",
+        ));
+    };
+
     let input_dir = input_path.parent().unwrap_or(Path::new("."));
     let extract_dir = input_dir.join("jsonl_extract");
 
-    // Función auxiliar para resolver rutas de salida
-    let resolve_output = |opt: Option<PathBuf>, default_name: &str, create_dir: &Path| -> io::Result<PathBuf> {
-        if let Some(p) = opt {
-            Ok(p)
-        } else {
-            if !create_dir.exists() {
-                fs::create_dir_all(create_dir)?;
-            }
-            Ok(create_dir.join(default_name))
-        }
-    };
+    if !extract_dir.exists() {
+        fs::create_dir_all(&extract_dir)?;
+    }
 
-    let out_txt_path = resolve_output(args.out_txt, "consolidado.txt", &extract_dir)?;
-    let out_md_path = resolve_output(args.out_md, "consolidado.md", &extract_dir)?;
-    let out_csv_path = resolve_output(args.out_csv, "reporte_tokens.csv", &extract_dir)?;
+    let out_txt_path = args.out_txt.unwrap_or_else(|| {
+        extract_dir.join(format!("consolidado_{}.txt", timestamp))
+    });
+    let out_md_path = args.out_md.unwrap_or_else(|| {
+        extract_dir.join(format!("consolidado_{}.md", timestamp))
+    });
+    let out_csv_path = args.out_csv.unwrap_or_else(|| {
+        extract_dir.join(format!("reporte_tokens_{}.csv", timestamp))
+    });
 
-    let file = File::open(input_path)?;
+    let file = File::open(&input_path)?;
     let reader = BufReader::new(file);
 
     let mut data_list: Vec<ConsolidatedData> = Vec::new();
@@ -170,22 +189,92 @@ fn main() -> io::Result<()> {
     // Ordenar alfabéticamente por la clave
     data_list.sort_by(|a, b| a.key.cmp(&b.key));
 
-    // Generar archivo TXT
-    let mut txt_file = File::create(&out_txt_path)?;
-    for data in &data_list {
+    generate_txt(&out_txt_path, &data_list)?;
+    generate_md(&out_md_path, &data_list)?;
+    generate_csv(&out_csv_path, &data_list)?;
+
+    Ok(())
+}
+
+fn process_directory(dir: &Path, timestamp: &str) -> io::Result<PathBuf> {
+    let mut jsonl_files = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("jsonl") {
+            jsonl_files.push(path);
+        }
+    }
+
+    if jsonl_files.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("No se encontraron archivos .jsonl en {:?}", dir),
+        ));
+    }
+
+    if jsonl_files.len() == 1 {
+        println!("Se encontró un único archivo JSONL: {:?}", jsonl_files[0]);
+        return Ok(jsonl_files[0].clone());
+    }
+
+    println!("Consolidando {} archivos JSONL...", jsonl_files.len());
+    let mut unique_lines = HashSet::new();
+    for file_path in &jsonl_files {
+        let file = File::open(file_path)?;
+        let reader = BufReader::new(file);
+        for line in reader.lines() {
+            let line = line?;
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+                unique_lines.insert(trimmed.to_string());
+            }
+        }
+    }
+
+    let mut records = Vec::new();
+    for line in unique_lines {
+        if let Ok(key_only) = serde_json::from_str::<KeyOnly>(&line) {
+            records.push((key_only.key, line));
+        } else {
+            records.push(("".to_string(), line));
+        }
+    }
+
+    // Ordenar por clave
+    records.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let consolidated_name = format!("consolidated_{}.jsonl", timestamp);
+    let consolidated_path = dir.join(consolidated_name);
+    let mut output_file = File::create(&consolidated_path)?;
+    for (_, line) in records {
+        writeln!(output_file, "{}", line)?;
+    }
+
+    println!("Archivo consolidado generado: {:?}", consolidated_path);
+    Ok(consolidated_path)
+}
+
+fn generate_txt(path: &Path, data_list: &[ConsolidatedData]) -> io::Result<()> {
+    let mut txt_file = File::create(path)?;
+    for data in data_list {
         writeln!(txt_file, "{}\n", data.text)?;
     }
-    println!("Archivo TXT generado: {:?}", out_txt_path);
+    println!("Archivo TXT generado: {:?}", path);
+    Ok(())
+}
 
-    // Generar archivo MD
-    let mut md_file = File::create(&out_md_path)?;
-    for data in &data_list {
+fn generate_md(path: &Path, data_list: &[ConsolidatedData]) -> io::Result<()> {
+    let mut md_file = File::create(path)?;
+    for data in data_list {
         writeln!(md_file, "## Clave: {}\n\n{}\n", data.key, data.text)?;
     }
-    println!("Archivo Markdown generado: {:?}", out_md_path);
+    println!("Archivo Markdown generado: {:?}", path);
+    Ok(())
+}
 
-    // Generar archivo CSV
-    let mut csv_writer = csv::Writer::from_path(&out_csv_path)?;
+fn generate_csv(path: &Path, data_list: &[ConsolidatedData]) -> io::Result<()> {
+    let mut csv_writer = csv::Writer::from_path(path)?;
     csv_writer.write_record(&[
         "key",
         "model",
@@ -198,7 +287,7 @@ fn main() -> io::Result<()> {
         "Total Tokens",
     ])?;
 
-    for data in &data_list {
+    for data in data_list {
         csv_writer.write_record(&[
             &data.key,
             &data.model,
@@ -212,7 +301,6 @@ fn main() -> io::Result<()> {
         ])?;
     }
     csv_writer.flush()?;
-    println!("Archivo CSV generado: {:?}", out_csv_path);
-
+    println!("Archivo CSV generado: {:?}", path);
     Ok(())
 }
