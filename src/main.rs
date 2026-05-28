@@ -208,7 +208,7 @@ fn main() -> io::Result<()> {
                 error!(
                     line = idx + 1,
                     error = %e,
-                    content = %&line[..line.len().min(120)],
+                    content = %line.chars().take(120).collect::<String>(),
                     "Error parseando línea"
                 );
             }
