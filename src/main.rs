@@ -1,11 +1,33 @@
 use chrono::Local;
 use clap::Parser;
 use fxhash::FxHashSet;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use tracing::{error, info};
+
+// ... (other structs)
+
+#[derive(Serialize)]
+struct TokenReport {
+    key: String,
+    model: String,
+    #[serde(rename = "Traffic Type")]
+    traffic_type: String,
+    #[serde(rename = "Prompt Image Tokens")]
+    prompt_image_tokens: u32,
+    #[serde(rename = "Prompt Text Tokens")]
+    prompt_text_tokens: u32,
+    #[serde(rename = "Prompt Tokens")]
+    prompt_tokens: u32,
+    #[serde(rename = "Candidate Tokens")]
+    candidate_tokens: u32,
+    #[serde(rename = "Thoughts Tokens")]
+    thoughts_tokens: u32,
+    #[serde(rename = "Total Tokens")]
+    total_tokens: u32,
+}
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -141,19 +163,6 @@ fn main() -> io::Result<()> {
     let mut md_file = File::create(&out_md_path)?;
     let mut csv_writer = csv::Writer::from_path(&out_csv_path)?;
 
-    // Escribir cabecera CSV
-    csv_writer.write_record(&[
-        "key",
-        "model",
-        "Traffic Type",
-        "Prompt Image Tokens",
-        "Prompt Text Tokens",
-        "Prompt Tokens",
-        "Candidate Tokens",
-        "Thoughts Tokens",
-        "Total Tokens",
-    ])?;
-
     let file = File::open(&input_path)?;
     let reader = BufReader::new(file);
 
@@ -183,17 +192,17 @@ fn main() -> io::Result<()> {
                 // Streaming a los archivos de salida
                 writeln!(txt_file, "{}\n", text)?;
                 writeln!(md_file, "## Clave: {}\n\n{}\n", pred.key, text)?;
-                csv_writer.write_record(&[
-                    &pred.key,
-                    &pred.response.model_version,
-                    &pred.response.usage_metadata.traffic_type,
-                    &image_tokens.to_string(),
-                    &text_tokens.to_string(),
-                    &pred.response.usage_metadata.prompt_token_count.to_string(),
-                    &pred.response.usage_metadata.candidates_token_count.to_string(),
-                    &pred.response.usage_metadata.thoughts_token_count.to_string(),
-                    &pred.response.usage_metadata.total_token_count.to_string(),
-                ])?;
+                csv_writer.serialize(TokenReport {
+                    key: pred.key,
+                    model: pred.response.model_version,
+                    traffic_type: pred.response.usage_metadata.traffic_type,
+                    prompt_image_tokens: image_tokens,
+                    prompt_text_tokens: text_tokens,
+                    prompt_tokens: pred.response.usage_metadata.prompt_token_count,
+                    candidate_tokens: pred.response.usage_metadata.candidates_token_count,
+                    thoughts_tokens: pred.response.usage_metadata.thoughts_token_count,
+                    total_tokens: pred.response.usage_metadata.total_token_count,
+                })?;
             }
             Err(e) => {
                 error!(
