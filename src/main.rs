@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use tracing::{error, info};
 
 impl From<PredictionLine> for TokenReport {
@@ -268,44 +267,53 @@ fn process_directory(dir: &Path, timestamp: &str) -> io::Result<PathBuf> {
 
     info!("Consolidando {} archivos JSONL...", jsonl_files.len());
     
-    // Usamos un conjunto de (key, hash_del_texto) para garantizar unicidad real
-    let seen_records = Mutex::new(FxHashSet::<(String, u64)>::default());
-    let unique_lines = Mutex::new(Vec::new());
-
-    jsonl_files.par_iter().for_each(|file_path| {
-        if let Ok(file) = File::open(file_path) {
-            let reader = BufReader::new(file);
-            for line in reader.lines() {
-                if let Ok(line) = line {
-                    let trimmed = line.trim();
-                    if trimmed.is_empty() {
-                        continue;
-                    }
-
-                    // Intentamos parsear la línea para extraer key y texto
-                    if let Ok(pred) = serde_json::from_str::<PredictionLine>(trimmed) {
-                        let text = pred.extract_text().unwrap_or("");
-                        let text_hash = fxhash::hash64(text.as_bytes());
-                        
-                        let mut records = seen_records.lock().unwrap();
-                        if records.insert((pred.key, text_hash)) {
-                            unique_lines.lock().unwrap().push(trimmed.to_string());
+    // Usamos fold/reduce para mejor paralelismo en lugar de Mutex compartido
+    let (_, unique_lines, total_skipped) = jsonl_files.par_iter().fold(
+        || (FxHashSet::<(String, u64)>::default(), Vec::new(), 0usize),
+        |(mut records, mut lines, mut skipped), file_path| {
+            if let Ok(file) = File::open(file_path) {
+                let reader = BufReader::new(file);
+                for line in reader.lines() {
+                    if let Ok(line) = line {
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() {
+                            continue;
                         }
-                    } else {
-                        // Si no podemos parsear, tratamos como línea única para no perder datos
-                        let hash = fxhash::hash64(trimmed.as_bytes());
-                        let mut records = seen_records.lock().unwrap();
-                        // Usamos un valor dummy para la key si no se pudo parsear
-                        if records.insert(("__invalid_key__".to_string(), hash)) {
-                            unique_lines.lock().unwrap().push(trimmed.to_string());
+
+                        // Intentamos parsear la línea para extraer key y texto
+                        if let Ok(pred) = serde_json::from_str::<PredictionLine>(trimmed) {
+                            let text = pred.extract_text().unwrap_or("");
+                            let text_hash = fxhash::hash64(text.as_bytes());
+                            
+                            if records.insert((pred.key.clone(), text_hash)) {
+                                lines.push(trimmed.to_string());
+                            }
+                        } else {
+                            error!("No se pudo parsear registro en archivo {:?}: {}", file_path, trimmed.chars().take(50).collect::<String>());
+                            skipped += 1;
                         }
                     }
                 }
             }
+            (records, lines, skipped)
         }
-    });
+    ).reduce(
+        || (FxHashSet::<(String, u64)>::default(), Vec::new(), 0usize),
+        |(mut acc_records, mut acc_lines, mut acc_skipped), (records, lines, skipped)| {
+            for ((key, hash), line) in records.into_iter().zip(lines.into_iter()) {
+                if acc_records.insert((key, hash)) {
+                    acc_lines.push(line);
+                }
+            }
+            acc_skipped += skipped;
+            (acc_records, acc_lines, acc_skipped)
+        }
+    );
 
-    let unique_lines = unique_lines.into_inner().unwrap();
+    if total_skipped > 0 {
+        error!("Total de líneas ignoradas por error de parseo: {}", total_skipped);
+    }
+
     let mut records = Vec::new();
     for line in unique_lines {
         if let Ok(key_only) = serde_json::from_str::<KeyOnly>(&line) {
@@ -315,8 +323,8 @@ fn process_directory(dir: &Path, timestamp: &str) -> io::Result<PathBuf> {
         }
     }
 
-    // Ordenar por clave
-    records.sort_by(|a, b| a.0.cmp(&b.0));
+    // Ordenar por clave usando orden natural (numérico consciente)
+    records.sort_by(|a, b| natord::compare(&a.0, &b.0));
 
     let consolidated_name = format!("consolidated_{}.jsonl", timestamp);
     let consolidated_path = dir.join(consolidated_name);
