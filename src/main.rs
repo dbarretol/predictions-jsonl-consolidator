@@ -16,7 +16,7 @@ struct TokenReport {
     key: String,
     model: String,
     #[serde(rename = "Traffic Type")]
-    traffic_type: String,
+    traffic_type: TrafficType,
     #[serde(rename = "Prompt Image Tokens")]
     prompt_image_tokens: u32,
     #[serde(rename = "Prompt Text Tokens")]
@@ -76,6 +76,19 @@ struct TokenDetail {
     token_count: u32,
 }
 
+#[derive(Deserialize, Debug, Serialize, Default)]
+enum TrafficType {
+    #[default]
+    #[serde(rename = "regular")]
+    Regular,
+    #[serde(rename = "onDemand")]
+    OnDemand,
+    #[serde(rename = "batch")]
+    Batch,
+    #[serde(other)]
+    Unknown,
+}
+
 #[derive(Deserialize, Debug)]
 struct UsageMetadata {
     #[serde(rename = "candidatesTokenCount", default)]
@@ -89,7 +102,7 @@ struct UsageMetadata {
     #[serde(rename = "totalTokenCount", default)]
     total_token_count: u32,
     #[serde(rename = "trafficType", default)]
-    traffic_type: String,
+    traffic_type: TrafficType,
 }
 
 #[derive(Deserialize, Debug)]
