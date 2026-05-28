@@ -100,6 +100,21 @@ struct ConsolidatedData {
     total_tokens: u32,
 }
 
+impl PredictionLine {
+    fn extract_text(&self) -> Option<&str> {
+        self.response
+            .candidates
+            .as_ref()?
+            .first()?
+            .content
+            .parts
+            .as_ref()?
+            .first()?
+            .text
+            .as_deref()
+    }
+}
+
 fn main() -> io::Result<()> {
     let args = Args::parse();
     let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
@@ -146,12 +161,8 @@ fn main() -> io::Result<()> {
         match serde_json::from_str::<PredictionLine>(&line) {
             Ok(pred) => {
                 let text = pred
-                    .response
-                    .candidates
-                    .and_then(|mut c| c.pop())
-                    .and_then(|c| c.content.parts)
-                    .and_then(|mut p| p.pop())
-                    .and_then(|p| p.text)
+                    .extract_text()
+                    .map(|s| s.to_string())
                     .unwrap_or_else(|| {
                         format!("> [Aviso: No se encontró texto para la clave `{}`]", pred.key)
                     });
