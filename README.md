@@ -6,7 +6,7 @@ La herramienta extrae el contenido transcrito, genera documentos legibles y un r
 
 ## Características
 
-- **Ordenamiento Inteligente**: Todas las entradas se ordenan alfabéticamente por su clave (`key`).
+- **Ordenamiento Inteligente**: Todas las entradas se ordenan por su clave (`key`) usando orden natural (numéricamente consciente: `item-2` antes que `item-10`), no orden alfabético puro.
 - **Consolidación TXT**: Genera un archivo de texto plano con todo el contenido concatenado. Cada texto va precedido por un separador `=== {key} ===` para poder rastrear de qué registro proviene (desactivable con `--no-keys`).
 - **Consolidación Markdown**: Genera un archivo `.md` estructurado con encabezados por cada clave, ideal para revisión humana.
 - **Reporte de Tokens (CSV)**: Genera un reporte detallado que incluye:
@@ -39,11 +39,15 @@ cargo run -- <RUTA_AL_ARCHIVO_JSONL> [OPCIONES]
 
 # Para consolidar una carpeta completa de archivos JSONL:
 cargo run -- --dir <RUTA_A_LA_CARPETA> [OPCIONES]
+
+# Sin argumentos: auto-modo, usa la carpeta actual como si fuera --dir .
+cargo run --
 ```
 
 ### Comportamiento por defecto
 - **Archivo individual**: Crea una carpeta llamada `jsonl_extract` en el mismo directorio donde se encuentra el archivo de entrada.
 - **Carpeta (--dir)**: Consolida todos los `.jsonl` encontrados en un archivo `consolidated_YYYYMMDD_HHMMSS.jsonl` en la carpeta indicada, y genera los reportes en una subcarpeta `jsonl_extract`.
+- **Auto-modo (sin `input` ni `--dir`)**: usa la carpeta actual como si se hubiera pasado `--dir .`. Pensado para ejecutar el `.exe` con doble click: en Windows, al terminar, espera "Presione Enter para salir..." antes de cerrar la ventana, para que se alcance a leer el resultado.
 - **Ubicación de los reportes**: es una decisión deliberada mantener `jsonl_extract/` como subcarpeta separada (en vez de guardar TXT/MD/CSV junto al `.jsonl` consolidado con el mismo prefijo), para no mezclar los `.jsonl` de origen/consolidado con los reportes derivados.
 - **Nombres de archivo**: Todos los archivos generados (`.jsonl` consolidado, `.txt`, `.md`, `.csv`) incluyen un timestamp (`YYYYMMDD_HHMMSS`) para evitar sobreescrituras.
 - **Rutas de salida personalizadas** (`--out-txt`/`--out-md`/`--out-csv`): se crean los directorios padre que falten. `jsonl_extract` solo se crea si al menos una de las tres rutas de salida sigue usando su valor por defecto.
@@ -110,6 +114,18 @@ La metadata (modelo, tokens, traffic type) no forma parte de la clave de dedupli
 
 Este flujo evita que la elección de "cuál sobrevive" dependa del orden no determinista de la
 consolidación paralela: siempre es una decisión explícita registrada en `decisions.csv`.
+
+## Tests
+
+```powershell
+cargo test
+```
+
+Incluye tests unitarios de parsing (`src/parser.rs`: `extract_text`, alias de
+`TrafficType`, valores por defecto de `UsageMetadata`) y tests de integración
+(`tests/cli.rs`) que ejecutan el binario real sobre archivos temporales: consolidación
+multi-archivo, deduplicación, orden natural, líneas corruptas, registros sin texto,
+conflictos de metadata, y validez del CSV generado.
 
 ## Estructura del CSV de Salida
 
