@@ -1,3 +1,4 @@
+use anyhow::{bail, Context, Result};
 use chrono::Local;
 use clap::Parser;
 use fxhash::FxHashSet;
@@ -171,7 +172,7 @@ struct ProcessedRecord {
     report: TokenReport,
 }
 
-fn main() -> io::Result<()> {
+fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
     let auto_mode = args.input.is_none() && args.dir.is_none();
@@ -180,14 +181,18 @@ fn main() -> io::Result<()> {
     let result = run(args, &timestamp);
 
     if let Err(ref e) = result {
-        eprintln!("Error: {}", e);
+        eprintln!("Error: {:?}", e);
     }
 
     if auto_mode {
         pause_before_exit();
     }
 
-    result
+    if result.is_err() {
+        std::process::exit(1);
+    }
+
+    Ok(())
 }
 
 /// En Windows, si el ejecutable se abrió con doble click no hay terminal que
@@ -202,13 +207,14 @@ fn pause_before_exit() {
     }
 }
 
-fn run(args: Args, timestamp: &str) -> io::Result<()> {
+fn run(args: Args, timestamp: &str) -> Result<()> {
     let input_path = if let Some(dir) = &args.dir {
         process_directory(dir, timestamp)?
     } else if let Some(input) = args.input {
         input
     } else {
-        let current_dir = std::env::current_dir()?;
+        let current_dir = std::env::current_dir()
+            .context("No se pudo determinar la carpeta actual")?;
         println!(
             "No se especificó archivo ni carpeta; usando la carpeta actual: {}",
             current_dir.display()
@@ -220,7 +226,12 @@ fn run(args: Args, timestamp: &str) -> io::Result<()> {
     let extract_dir = input_dir.join("jsonl_extract");
 
     if !extract_dir.exists() {
-        fs::create_dir_all(&extract_dir)?;
+        fs::create_dir_all(&extract_dir).with_context(|| {
+            format!(
+                "No se pudo crear el directorio de salida: {}",
+                extract_dir.display()
+            )
+        })?;
     }
 
     // Abrir archivos de salida para streaming (aunque ahora escribiremos al final)
@@ -237,11 +248,18 @@ fn run(args: Args, timestamp: &str) -> io::Result<()> {
     // Lista para acumular todos los datos y ordenarlos antes de escribir cualquier archivo
     let mut processed_records = Vec::new();
 
-    let file = File::open(&input_path)?;
+    let file = File::open(&input_path)
+        .with_context(|| format!("No se pudo abrir el archivo de entrada: {}", input_path.display()))?;
     let reader = BufReader::new(file);
 
     for (idx, line) in reader.lines().enumerate() {
-        let line = line?;
+        let line = line.with_context(|| {
+            format!(
+                "No se pudo leer la línea {} de {}",
+                idx + 1,
+                input_path.display()
+            )
+        })?;
         if line.trim().is_empty() {
             continue;
         }
@@ -276,31 +294,43 @@ fn run(args: Args, timestamp: &str) -> io::Result<()> {
     processed_records.sort_by(|a, b| natord::compare(&a.key, &b.key));
 
     // Escribir archivos de salida ahora que todo está ordenado
-    let mut txt_file = File::create(&out_txt_path)?;
-    let mut md_file = File::create(&out_md_path)?;
-    let mut csv_writer = csv::Writer::from_path(&out_csv_path)?;
+    let mut txt_file = File::create(&out_txt_path)
+        .with_context(|| format!("No se pudo crear el archivo TXT: {}", out_txt_path.display()))?;
+    let mut md_file = File::create(&out_md_path)
+        .with_context(|| format!("No se pudo crear el archivo Markdown: {}", out_md_path.display()))?;
+    let mut csv_writer = csv::Writer::from_path(&out_csv_path)
+        .with_context(|| format!("No se pudo crear el archivo CSV: {}", out_csv_path.display()))?;
 
     for record in processed_records {
         // Escribir TXT
-        writeln!(txt_file, "{}\n", record.text)?;
-        
+        writeln!(txt_file, "{}\n", record.text)
+            .with_context(|| format!("No se pudo escribir en {}", out_txt_path.display()))?;
+
         // Escribir Markdown
-        writeln!(md_file, "## Clave: {}\n\n{}\n", record.key, record.text)?;
-        
+        writeln!(md_file, "## Clave: {}\n\n{}\n", record.key, record.text)
+            .with_context(|| format!("No se pudo escribir en {}", out_md_path.display()))?;
+
         // Escribir CSV
-        csv_writer.serialize(record.report)?;
+        csv_writer
+            .serialize(record.report)
+            .with_context(|| format!("No se pudo escribir en {}", out_csv_path.display()))?;
     }
 
-    csv_writer.flush()?;
-    info!("Archivos generados en: {:?}", extract_dir);
+    csv_writer
+        .flush()
+        .with_context(|| format!("No se pudo finalizar el archivo CSV: {}", out_csv_path.display()))?;
+    info!("Archivos generados en: {}", extract_dir.display());
 
     Ok(())
 }
 
-fn process_directory(dir: &Path, timestamp: &str) -> io::Result<PathBuf> {
+fn process_directory(dir: &Path, timestamp: &str) -> Result<PathBuf> {
     let mut jsonl_files = Vec::new();
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
+    let entries = fs::read_dir(dir)
+        .with_context(|| format!("No se pudo leer la carpeta: {}", dir.display()))?;
+    for entry in entries {
+        let entry = entry
+            .with_context(|| format!("No se pudo leer una entrada de la carpeta: {}", dir.display()))?;
         let path = entry.path();
         if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("jsonl") {
             let filename = path.file_name()
@@ -314,14 +344,11 @@ fn process_directory(dir: &Path, timestamp: &str) -> io::Result<PathBuf> {
     }
 
     if jsonl_files.is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("No se encontraron archivos .jsonl en {:?}", dir),
-        ));
+        bail!("No se encontraron archivos .jsonl en {}", dir.display());
     }
 
     if jsonl_files.len() == 1 {
-        println!("Se encontró un único archivo JSONL: {:?}", jsonl_files[0]);
+        println!("Se encontró un único archivo JSONL: {}", jsonl_files[0].display());
         return Ok(jsonl_files[0].clone());
     }
 
@@ -394,11 +421,21 @@ fn process_directory(dir: &Path, timestamp: &str) -> io::Result<PathBuf> {
 
     let consolidated_name = format!("consolidated_{}.jsonl", timestamp);
     let consolidated_path = dir.join(consolidated_name);
-    let mut output_file = File::create(&consolidated_path)?;
+    let mut output_file = File::create(&consolidated_path).with_context(|| {
+        format!(
+            "No se pudo crear el archivo consolidado: {}",
+            consolidated_path.display()
+        )
+    })?;
     for (_, line) in records {
-        writeln!(output_file, "{}", line)?;
+        writeln!(output_file, "{}", line).with_context(|| {
+            format!(
+                "No se pudo escribir en el archivo consolidado: {}",
+                consolidated_path.display()
+            )
+        })?;
     }
 
-    println!("Archivo consolidado generado: {:?}", consolidated_path);
+    println!("Archivo consolidado generado: {}", consolidated_path.display());
     Ok(consolidated_path)
 }
