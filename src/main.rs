@@ -174,17 +174,46 @@ struct ProcessedRecord {
 fn main() -> io::Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
+    let auto_mode = args.input.is_none() && args.dir.is_none();
     let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
 
+    let result = run(args, &timestamp);
+
+    if let Err(ref e) = result {
+        eprintln!("Error: {}", e);
+    }
+
+    if auto_mode {
+        pause_before_exit();
+    }
+
+    result
+}
+
+/// En Windows, si el ejecutable se abrió con doble click no hay terminal que
+/// mantenga la ventana abierta al terminar: se espera una tecla para poder
+/// leer el resultado antes de que se cierre.
+fn pause_before_exit() {
+    if cfg!(windows) {
+        println!("\nPresione Enter para salir...");
+        let _ = io::stdout().flush();
+        let mut buf = String::new();
+        let _ = io::stdin().read_line(&mut buf);
+    }
+}
+
+fn run(args: Args, timestamp: &str) -> io::Result<()> {
     let input_path = if let Some(dir) = &args.dir {
-        process_directory(dir, &timestamp)?
+        process_directory(dir, timestamp)?
     } else if let Some(input) = args.input {
         input
     } else {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "Debe proporcionar un archivo de entrada o una carpeta con --dir",
-        ));
+        let current_dir = std::env::current_dir()?;
+        println!(
+            "No se especificó archivo ni carpeta; usando la carpeta actual: {}",
+            current_dir.display()
+        );
+        process_directory(&current_dir, timestamp)?
     };
 
     let input_dir = input_path.parent().unwrap_or_else(|| Path::new("."));
