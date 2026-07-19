@@ -196,7 +196,27 @@ a propósito — sin caso de uso que las justifique todavía.
 
 ---
 
-## Orden sugerido de ejecución
+## Fase 7 — Hallazgos de la re-auditoría 2 (2026-07-18)
+
+Verificado: los 6 puntos de la Fase 6 quedaron resueltos o diferidos con justificación
+razonable; `cargo clippy --all-targets` limpio y 22/22 tests pasan. Un único hallazgo
+residual, teórico:
+
+- [x] **7.1 Posible loop infinito ante errores de E/S persistentes** *(hardening opcional)*
+  En el loop de lectura de `consolidator.rs`, tras un `Err` en `reader.lines()` se
+  continúa iterando. Para el caso común (línea con UTF-8 inválido, `InvalidData`) los
+  bytes ya se consumieron y la iteración avanza — correcto. Pero un error de E/S real
+  y persistente (ej. sector dañado del disco) haría que `lines()` devuelva `Err`
+  indefinidamente: loop infinito con `skipped` creciendo sin límite. Mitigación simple:
+  hacer `break` del archivo cuando el error no sea `ErrorKind::InvalidData` (un error
+  físico no se resuelve reintentando), contando el archivo como ilegible/incompleto.
+  Resuelto: el `match` distingue `ErrorKind::InvalidData` (se cuenta como error de parseo
+  y se sigue leyendo el archivo) de cualquier otro error de E/S (se corta la lectura de
+  ese archivo con `break` y se cuenta en `unreadable_files`, reutilizando el mecanismo ya
+  existente para archivos que no se pudieron abrir). No se agregó un test dedicado: forzar
+  un error de E/S persistente de forma determinística y multiplataforma habría requerido
+  parametrizar la función sobre un `Read` inyectable, una complejidad mayor que el propio
+  fix para un caso ya etiquetado como hardening opcional.
 
 1. **Fase 1 completa** — bajo esfuerzo, es lo que el usuario percibe primero.
 2. **2.1 (decisión) → 2.2 → 2.3** — definen el pipeline definitivo.
