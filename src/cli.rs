@@ -46,4 +46,12 @@ pub struct Args {
     /// Busca archivos .jsonl también en subcarpetas (solo aplica con --dir o auto-modo)
     #[arg(long, short = 'r')]
     pub recursive: bool,
+
+    /// Muestra diagnóstico detallado (tiempo por archivo, throughput) además de los errores
+    #[arg(long, short = 'v', conflicts_with = "quiet")]
+    pub verbose: bool,
+
+    /// Silencia el diagnóstico de fondo y la barra de progreso; solo muestra errores
+    #[arg(long, short = 'q', conflicts_with = "verbose")]
+    pub quiet: bool,
 }

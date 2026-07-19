@@ -17,8 +17,8 @@ use std::path::Path;
 use tracing::error;
 
 fn main() -> Result<()> {
-    tracing_subscriber::fmt::init();
     let args = Args::parse();
+    init_tracing(&args);
     let auto_mode = args.input.is_none() && args.dir.is_none();
     let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
 
@@ -37,6 +37,24 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Nivel de diagnóstico por defecto `info`; `--verbose` lo sube a `debug` (revela
+/// las métricas de consolidación) y `--quiet` lo baja a `error` (nada salvo fallos).
+/// `RUST_LOG`, si está definida, tiene prioridad sobre ambos flags.
+fn init_tracing(args: &Args) {
+    let default_level = if args.verbose {
+        "debug"
+    } else if args.quiet {
+        "error"
+    } else {
+        "info"
+    };
+
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default_level));
+
+    tracing_subscriber::fmt().with_env_filter(env_filter).init();
 }
 
 /// En Windows, si el ejecutable se abrió con doble click no hay terminal que
@@ -81,7 +99,7 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
     }
 
     let (resolved_records, total_seen, total_skipped, unreadable_files) =
-        deduplicate_files(&source_files, &base_dir, decisions_path.as_deref())?;
+        deduplicate_files(&source_files, &base_dir, decisions_path.as_deref(), !args.quiet)?;
     let duplicates_removed = total_seen.saturating_sub(resolved_records.len());
 
     // El archivo consolidated_*.jsonl solo tiene sentido cuando de verdad se combinan

@@ -2,12 +2,15 @@ use crate::errors::{AppError, Result};
 use crate::models::TokenReport;
 use crate::parser::PredictionLine;
 use fxhash::FxHashMap;
+use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::BufRead;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+use tracing::debug;
 use tracing::error;
 use walkdir::WalkDir;
 
@@ -119,7 +122,22 @@ pub fn deduplicate_files(
     files: &[PathBuf],
     decisions_dir: &Path,
     decisions_path: Option<&Path>,
+    show_progress: bool,
 ) -> Result<(Vec<RecordEntry>, usize, usize, Vec<PathBuf>)> {
+    let started_at = Instant::now();
+
+    let progress = if show_progress {
+        let pb = ProgressBar::new_spinner();
+        pb.set_style(
+            ProgressStyle::with_template("{spinner:.green} {pos} líneas procesadas ({elapsed})")
+                .unwrap(),
+        );
+        pb.enable_steady_tick(Duration::from_millis(100));
+        pb
+    } else {
+        ProgressBar::hidden()
+    };
+
     // Usamos fold/reduce para mejor paralelismo en lugar de Mutex compartido.
     // Agrupamos por (key, hash del texto): dos líneas con la misma key y el mismo
     // texto son duplicados; si además difieren en metadata (modelo/tokens), el grupo
@@ -130,13 +148,17 @@ pub fn deduplicate_files(
         |(mut groups, mut skipped, mut total, mut unreadable), file_path| {
             match File::open(file_path) {
                 Ok(file) => {
+                    let file_started_at = Instant::now();
+                    let mut file_lines = 0usize;
                     let reader = BufReader::new(file);
                     for line in reader.lines() {
+                        progress.inc(1);
                         if let Ok(line) = line {
                             let trimmed = line.trim();
                             if trimmed.is_empty() {
                                 continue;
                             }
+                            file_lines += 1;
 
                             // Parseamos la línea una sola vez: el registro completo
                             // (`TokenReport`) queda listo desde acá, para no tener que
@@ -162,6 +184,12 @@ pub fn deduplicate_files(
                             }
                         }
                     }
+                    debug!(
+                        file = %file_path.display(),
+                        lines = file_lines,
+                        elapsed_ms = file_started_at.elapsed().as_millis(),
+                        "Archivo procesado"
+                    );
                 }
                 Err(e) => {
                     error!("No se pudo abrir archivo {:?}: {}", file_path, e);
@@ -181,6 +209,18 @@ pub fn deduplicate_files(
             acc_unreadable.append(&mut unreadable);
             (acc_groups, acc_skipped, acc_total, acc_unreadable)
         }
+    );
+
+    progress.finish_and_clear();
+
+    let elapsed = started_at.elapsed();
+    let throughput = total_seen as f64 / elapsed.as_secs_f64().max(0.001);
+    debug!(
+        total_files = files.len(),
+        total_lines = total_seen,
+        elapsed_ms = elapsed.as_millis(),
+        throughput_lineas_por_seg = format!("{:.1}", throughput),
+        "Consolidación completada"
     );
 
     if total_skipped > 0 {
