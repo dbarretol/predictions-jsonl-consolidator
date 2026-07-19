@@ -91,6 +91,10 @@ struct Args {
     /// (mismo key+texto con distinta metadata) detectados en una corrida previa
     #[arg(long)]
     decisions: Option<PathBuf>,
+
+    /// Omite el separador "=== {key} ===" antes de cada texto en el TXT de salida
+    #[arg(long)]
+    no_keys: bool,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -392,10 +396,17 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
     let mut csv_writer = csv::Writer::from_path(&out_csv_path)
         .with_context(|| format!("No se pudo crear el archivo CSV: {}", out_csv_path.display()))?;
 
+    let include_keys_in_txt = !args.no_keys;
+
     for record in processed_records {
         // Escribir TXT
-        writeln!(txt_file, "{}\n", record.text)
-            .with_context(|| format!("No se pudo escribir en {}", out_txt_path.display()))?;
+        if include_keys_in_txt {
+            writeln!(txt_file, "=== {} ===\n{}\n", record.key, record.text)
+                .with_context(|| format!("No se pudo escribir en {}", out_txt_path.display()))?;
+        } else {
+            writeln!(txt_file, "{}\n", record.text)
+                .with_context(|| format!("No se pudo escribir en {}", out_txt_path.display()))?;
+        }
 
         // Escribir Markdown
         writeln!(md_file, "## Clave: {}\n\n{}\n", record.key, record.text)
