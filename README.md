@@ -76,7 +76,7 @@ cargo run -- example/predictions.jsonl
 | `--decisions` | Ruta a un `decisions.csv` ya completado, para resolver conflictos de deduplicación de una corrida previa. | N/A |
 | `--no-keys` | Omite el separador `=== {key} ===` antes de cada texto en el TXT de salida. | Desactivado (los separadores se incluyen) |
 | `--verbose, -v` | Muestra diagnóstico detallado (tiempo por archivo, throughput) además de los errores. | Desactivado |
-| `--quiet, -q` | Silencia el diagnóstico de fondo y la barra de progreso; solo muestra errores. | Desactivado |
+| `--quiet, -q` | Silencia el diagnóstico de fondo (tracing) y la barra de progreso; el resumen final y los errores se siguen mostrando. | Desactivado |
 | `-h, --help` | Muestra la ayuda del programa. | N/A |
 | `-V, --version` | Muestra la versión del programa. | N/A |
 
@@ -115,6 +115,11 @@ La metadata (modelo, tokens, traffic type) no forma parte de la clave de dedupli
 Este flujo evita que la elección de "cuál sobrevive" dependa del orden no determinista de la
 consolidación paralela: siempre es una decisión explícita registrada en `decisions.csv`.
 
+En el resumen final, los duplicados exactos colapsados automáticamente se cuentan en
+"Duplicados eliminados"; los candidatos descartados por decisión explícita (`ignorar`
+en `decisions.csv`) se cuentan aparte, en "Descartados por decisión" (solo aparece si
+hubo al menos uno), ya que no son duplicados sino variantes que el usuario eligió no conservar.
+
 ## Tests
 
 ```powershell
@@ -125,7 +130,10 @@ Incluye tests unitarios de parsing (`src/parser.rs`: `extract_text`, alias de
 `TrafficType`, valores por defecto de `UsageMetadata`) y tests de integración
 (`tests/cli.rs`) que ejecutan el binario real sobre archivos temporales: consolidación
 multi-archivo, deduplicación, orden natural, líneas corruptas, registros sin texto,
-conflictos de metadata, y validez del CSV generado.
+conflictos de metadata, validez del CSV generado, el flujo completo de `--decisions`
+(candidato conservado en el re-run y el caso sin ningún "mantener"), `--recursive`,
+`--no-keys`, y el exit code ≠ 0 con archivo ilegible en modo `--dir` (este último solo
+en Windows).
 
 ## Estructura del CSV de Salida
 
