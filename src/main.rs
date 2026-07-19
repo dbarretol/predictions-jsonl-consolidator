@@ -172,6 +172,15 @@ struct ProcessedRecord {
     report: TokenReport,
 }
 
+#[derive(Default)]
+struct ConsolidationSummary {
+    files_read: usize,
+    duplicates_removed: usize,
+    parse_errors: usize,
+    /// Ruta del `consolidated_*.jsonl` generado, si se combinaron varios archivos.
+    consolidated_file: Option<PathBuf>,
+}
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
@@ -208,10 +217,16 @@ fn pause_before_exit() {
 }
 
 fn run(args: Args, timestamp: &str) -> Result<()> {
-    let input_path = if let Some(dir) = &args.dir {
+    let (input_path, summary) = if let Some(dir) = &args.dir {
         process_directory(dir, timestamp)?
     } else if let Some(input) = args.input {
-        input
+        (
+            input,
+            ConsolidationSummary {
+                files_read: 1,
+                ..Default::default()
+            },
+        )
     } else {
         let current_dir = std::env::current_dir()
             .context("No se pudo determinar la carpeta actual")?;
@@ -247,6 +262,8 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
 
     // Lista para acumular todos los datos y ordenarlos antes de escribir cualquier archivo
     let mut processed_records = Vec::new();
+    let mut final_parse_errors = 0usize;
+    let mut records_without_text = 0usize;
 
     let file = File::open(&input_path)
         .with_context(|| format!("No se pudo abrir el archivo de entrada: {}", input_path.display()))?;
@@ -266,13 +283,16 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
 
         match serde_json::from_str::<PredictionLine>(&line) {
             Ok(pred) => {
-                let text = pred
-                    .extract_text()
-                    .unwrap_or("...")
-                    .to_string();
-                
+                let text = match pred.extract_text() {
+                    Some(text) => text.to_string(),
+                    None => {
+                        records_without_text += 1;
+                        "...".to_string()
+                    }
+                };
+
                 let report = TokenReport::from(pred.clone());
-                
+
                 processed_records.push(ProcessedRecord {
                     key: pred.key,
                     text,
@@ -280,6 +300,7 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
                 });
             }
             Err(e) => {
+                final_parse_errors += 1;
                 error!(
                     line = idx + 1,
                     error = %e,
@@ -289,9 +310,10 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
             }
         }
     }
-    
+
     // Ordenar TODO globalmente por clave usando orden natural
     processed_records.sort_by(|a, b| natord::compare(&a.key, &b.key));
+    let lines_processed = processed_records.len();
 
     // Escribir archivos de salida ahora que todo está ordenado
     let mut txt_file = File::create(&out_txt_path)
@@ -319,12 +341,28 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
     csv_writer
         .flush()
         .with_context(|| format!("No se pudo finalizar el archivo CSV: {}", out_csv_path.display()))?;
-    info!("Archivos generados en: {}", extract_dir.display());
+
+    println!("\nResumen:");
+    println!("  Archivos leídos:            {}", summary.files_read);
+    println!("  Líneas procesadas:          {}", lines_processed);
+    println!(
+        "  Líneas con error de parseo: {}",
+        summary.parse_errors + final_parse_errors
+    );
+    println!("  Duplicados eliminados:      {}", summary.duplicates_removed);
+    println!("  Registros sin texto:        {}", records_without_text);
+    println!("  Archivos generados:");
+    if let Some(consolidated) = &summary.consolidated_file {
+        println!("    - {}", consolidated.display());
+    }
+    println!("    - {}", out_txt_path.display());
+    println!("    - {}", out_md_path.display());
+    println!("    - {}", out_csv_path.display());
 
     Ok(())
 }
 
-fn process_directory(dir: &Path, timestamp: &str) -> Result<PathBuf> {
+fn process_directory(dir: &Path, timestamp: &str) -> Result<(PathBuf, ConsolidationSummary)> {
     let mut jsonl_files = Vec::new();
     let entries = fs::read_dir(dir)
         .with_context(|| format!("No se pudo leer la carpeta: {}", dir.display()))?;
@@ -349,16 +387,22 @@ fn process_directory(dir: &Path, timestamp: &str) -> Result<PathBuf> {
 
     if jsonl_files.len() == 1 {
         println!("Se encontró un único archivo JSONL: {}", jsonl_files[0].display());
-        return Ok(jsonl_files[0].clone());
+        return Ok((
+            jsonl_files[0].clone(),
+            ConsolidationSummary {
+                files_read: 1,
+                ..Default::default()
+            },
+        ));
     }
 
     info!("Consolidando {} archivos JSONL...", jsonl_files.len());
-    
+
     // Usamos fold/reduce para mejor paralelismo en lugar de Mutex compartido
     // Ahora acumulamos RecordEntry en un Vec para mantener la consistencia
-    let (_, final_records, total_skipped) = jsonl_files.par_iter().fold(
-        || (FxHashSet::<(String, u64)>::default(), Vec::<RecordEntry>::new(), 0usize),
-        |(mut seen, mut acc_records, mut skipped), file_path| {
+    let (_, final_records, total_skipped, total_seen) = jsonl_files.par_iter().fold(
+        || (FxHashSet::<(String, u64)>::default(), Vec::<RecordEntry>::new(), 0usize, 0usize),
+        |(mut seen, mut acc_records, mut skipped, mut total), file_path| {
             match File::open(file_path) {
                 Ok(file) => {
                     let reader = BufReader::new(file);
@@ -373,7 +417,8 @@ fn process_directory(dir: &Path, timestamp: &str) -> Result<PathBuf> {
                             if let Ok(pred) = serde_json::from_str::<PredictionLine>(trimmed) {
                                 let text = pred.extract_text().unwrap_or("");
                                 let text_hash = fxhash::hash64(text.as_bytes());
-                                
+                                total += 1;
+
                                 if seen.insert((pred.key.clone(), text_hash)) {
                                     acc_records.push(RecordEntry {
                                         key: pred.key,
@@ -392,24 +437,27 @@ fn process_directory(dir: &Path, timestamp: &str) -> Result<PathBuf> {
                     error!("No se pudo abrir archivo {:?}: {}", file_path, e);
                 }
             }
-            (seen, acc_records, skipped)
+            (seen, acc_records, skipped, total)
         }
     ).reduce(
-        || (FxHashSet::<(String, u64)>::default(), Vec::<RecordEntry>::new(), 0usize),
-        |(mut acc_seen, mut acc_records, mut acc_skipped), (_seen, records, skipped)| {
+        || (FxHashSet::<(String, u64)>::default(), Vec::<RecordEntry>::new(), 0usize, 0usize),
+        |(mut acc_seen, mut acc_records, mut acc_skipped, mut acc_total), (_seen, records, skipped, total)| {
             for entry in records {
                 if acc_seen.insert((entry.key.clone(), entry.text_hash)) {
                     acc_records.push(entry);
                 }
             }
             acc_skipped += skipped;
-            (acc_seen, acc_records, acc_skipped)
+            acc_total += total;
+            (acc_seen, acc_records, acc_skipped, acc_total)
         }
     );
 
     if total_skipped > 0 {
         error!("Total de líneas ignoradas por error de parseo: {}", total_skipped);
     }
+
+    let duplicates_removed = total_seen.saturating_sub(final_records.len());
 
     let mut records = Vec::new();
     for entry in final_records {
@@ -437,5 +485,13 @@ fn process_directory(dir: &Path, timestamp: &str) -> Result<PathBuf> {
     }
 
     println!("Archivo consolidado generado: {}", consolidated_path.display());
-    Ok(consolidated_path)
+    Ok((
+        consolidated_path.clone(),
+        ConsolidationSummary {
+            files_read: jsonl_files.len(),
+            duplicates_removed,
+            parse_errors: total_skipped,
+            consolidated_file: Some(consolidated_path),
+        },
+    ))
 }
