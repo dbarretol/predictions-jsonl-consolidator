@@ -264,16 +264,15 @@ fn pause_before_exit() {
 
 fn run(args: Args, timestamp: &str) -> Result<()> {
     let decisions_path = args.decisions.clone();
-    let (input_path, summary) = if let Some(dir) = &args.dir {
-        process_directory(dir, timestamp, decisions_path.as_deref())?
-    } else if let Some(input) = args.input {
-        (
-            input,
-            ConsolidationSummary {
-                files_read: 1,
-                ..Default::default()
-            },
-        )
+
+    // Tanto el modo de archivo único como el de carpeta convergen en la misma lista
+    // de archivos a deduplicar: la diferencia es solo cuántos hay y si, al haber más
+    // de uno, corresponde escribir un consolidated_*.jsonl con el resultado.
+    let (base_dir, source_files, is_dir_scan) = if let Some(dir) = &args.dir {
+        (dir.clone(), find_jsonl_files(dir)?, true)
+    } else if let Some(input) = &args.input {
+        let base = input.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
+        (base, vec![input.clone()], false)
     } else {
         let current_dir = std::env::current_dir()
             .context("No se pudo determinar la carpeta actual")?;
@@ -281,11 +280,60 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
             "No se especificó archivo ni carpeta; usando la carpeta actual: {}",
             current_dir.display()
         );
-        process_directory(&current_dir, timestamp, decisions_path.as_deref())?
+        (current_dir.clone(), find_jsonl_files(&current_dir)?, true)
     };
 
-    let input_dir = input_path.parent().unwrap_or_else(|| Path::new("."));
-    let extract_dir = input_dir.join("jsonl_extract");
+    if is_dir_scan {
+        if source_files.len() == 1 {
+            println!("Se encontró un único archivo JSONL: {}", source_files[0].display());
+        } else {
+            println!("Consolidando {} archivos JSONL...", source_files.len());
+        }
+    }
+
+    let (resolved_records, total_seen, total_skipped) =
+        deduplicate_files(&source_files, &base_dir, decisions_path.as_deref())?;
+    let duplicates_removed = total_seen.saturating_sub(resolved_records.len());
+
+    // El archivo consolidated_*.jsonl solo tiene sentido cuando de verdad se combinan
+    // varios archivos de origen.
+    let consolidated_file = if is_dir_scan && source_files.len() > 1 {
+        let mut records: Vec<(&str, &str)> = resolved_records
+            .iter()
+            .map(|entry| (entry.key.as_str(), entry.line.as_str()))
+            .collect();
+        records.sort_by(|a, b| natord::compare(a.0, b.0));
+
+        let consolidated_name = format!("consolidated_{}.jsonl", timestamp);
+        let consolidated_path = base_dir.join(consolidated_name);
+        let mut output_file = File::create(&consolidated_path).with_context(|| {
+            format!(
+                "No se pudo crear el archivo consolidado: {}",
+                consolidated_path.display()
+            )
+        })?;
+        for (_, line) in records {
+            writeln!(output_file, "{}", line).with_context(|| {
+                format!(
+                    "No se pudo escribir en el archivo consolidado: {}",
+                    consolidated_path.display()
+                )
+            })?;
+        }
+        println!("Archivo consolidado generado: {}", consolidated_path.display());
+        Some(consolidated_path)
+    } else {
+        None
+    };
+
+    let summary = ConsolidationSummary {
+        files_read: source_files.len(),
+        duplicates_removed,
+        parse_errors: total_skipped,
+        consolidated_file,
+    };
+
+    let extract_dir = base_dir.join("jsonl_extract");
 
     if !extract_dir.exists() {
         fs::create_dir_all(&extract_dir).with_context(|| {
@@ -296,7 +344,6 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
         })?;
     }
 
-    // Abrir archivos de salida para streaming (aunque ahora escribiremos al final)
     let out_txt_path = args.out_txt.unwrap_or_else(|| {
         extract_dir.join(format!("consolidado_{}.txt", timestamp))
     });
@@ -307,55 +354,31 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
         extract_dir.join(format!("reporte_tokens_{}.csv", timestamp))
     });
 
-    // Lista para acumular todos los datos y ordenarlos antes de escribir cualquier archivo
+    // Los registros ya vienen deduplicados desde `deduplicate_files`; cada línea ya
+    // fue validada como JSON allí, así que este re-parseo no debería poder fallar.
     let mut processed_records = Vec::new();
-    let mut final_parse_errors = 0usize;
     let mut records_without_text = 0usize;
 
-    let file = File::open(&input_path)
-        .with_context(|| format!("No se pudo abrir el archivo de entrada: {}", input_path.display()))?;
-    let reader = BufReader::new(file);
-
-    for (idx, line) in reader.lines().enumerate() {
-        let line = line.with_context(|| {
-            format!(
-                "No se pudo leer la línea {} de {}",
-                idx + 1,
-                input_path.display()
-            )
+    for entry in resolved_records {
+        let pred: PredictionLine = serde_json::from_str(&entry.line).with_context(|| {
+            format!("No se pudo reinterpretar un registro ya validado (key: {})", entry.key)
         })?;
-        if line.trim().is_empty() {
-            continue;
-        }
 
-        match serde_json::from_str::<PredictionLine>(&line) {
-            Ok(pred) => {
-                let text = match pred.extract_text() {
-                    Some(text) => text.to_string(),
-                    None => {
-                        records_without_text += 1;
-                        "...".to_string()
-                    }
-                };
-
-                let report = TokenReport::from(pred.clone());
-
-                processed_records.push(ProcessedRecord {
-                    key: pred.key,
-                    text,
-                    report,
-                });
+        let text = match pred.extract_text() {
+            Some(text) => text.to_string(),
+            None => {
+                records_without_text += 1;
+                "...".to_string()
             }
-            Err(e) => {
-                final_parse_errors += 1;
-                error!(
-                    line = idx + 1,
-                    error = %e,
-                    content = %line.chars().take(120).collect::<String>(),
-                    "Error parseando línea"
-                );
-            }
-        }
+        };
+
+        let report = TokenReport::from(pred);
+
+        processed_records.push(ProcessedRecord {
+            key: entry.key,
+            text,
+            report,
+        });
     }
 
     // Ordenar TODO globalmente por clave usando orden natural
@@ -392,10 +415,7 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
     println!("\nResumen:");
     println!("  Archivos leídos:            {}", summary.files_read);
     println!("  Líneas procesadas:          {}", lines_processed);
-    println!(
-        "  Líneas con error de parseo: {}",
-        summary.parse_errors + final_parse_errors
-    );
+    println!("  Líneas con error de parseo: {}", summary.parse_errors);
     println!("  Duplicados eliminados:      {}", summary.duplicates_removed);
     println!("  Registros sin texto:        {}", records_without_text);
     println!("  Archivos generados:");
@@ -409,11 +429,9 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
     Ok(())
 }
 
-fn process_directory(
-    dir: &Path,
-    timestamp: &str,
-    decisions_path: Option<&Path>,
-) -> Result<(PathBuf, ConsolidationSummary)> {
+/// Lista los archivos `.jsonl` de una carpeta a consolidar (excluye resultados de
+/// una consolidación previa).
+fn find_jsonl_files(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut jsonl_files = Vec::new();
     let entries = fs::read_dir(dir)
         .with_context(|| format!("No se pudo leer la carpeta: {}", dir.display()))?;
@@ -436,25 +454,26 @@ fn process_directory(
         bail!("No se encontraron archivos .jsonl en {}", dir.display());
     }
 
-    if jsonl_files.len() == 1 {
-        println!("Se encontró un único archivo JSONL: {}", jsonl_files[0].display());
-        return Ok((
-            jsonl_files[0].clone(),
-            ConsolidationSummary {
-                files_read: 1,
-                ..Default::default()
-            },
-        ));
-    }
+    Ok(jsonl_files)
+}
 
-    println!("Consolidando {} archivos JSONL...", jsonl_files.len());
-
+/// Agrupa las líneas de uno o más archivos JSONL por (key, hash del texto de la
+/// respuesta), colapsa duplicados exactos y resuelve conflictos de metadata (ver
+/// `resolve_conflicts`). La misma función deduplica tanto un único archivo como
+/// varios, para que ambos modos de entrada compartan la lógica de deduplicación.
+/// Devuelve los registros resueltos junto con el total de líneas vistas y las
+/// líneas descartadas por error de parseo.
+fn deduplicate_files(
+    files: &[PathBuf],
+    decisions_dir: &Path,
+    decisions_path: Option<&Path>,
+) -> Result<(Vec<RecordEntry>, usize, usize)> {
     // Usamos fold/reduce para mejor paralelismo en lugar de Mutex compartido.
     // Agrupamos por (key, hash del texto): dos líneas con la misma key y el mismo
     // texto son duplicados; si además difieren en metadata (modelo/tokens), el grupo
     // queda con más de una línea distinta y se trata como un conflicto a resolver.
     type Group = FxHashMap<(String, u64), Vec<RecordEntry>>;
-    let (groups, total_skipped, total_seen) = jsonl_files.par_iter().fold(
+    let (groups, total_skipped, total_seen) = files.par_iter().fold(
         || (Group::default(), 0usize, 0usize),
         |(mut groups, mut skipped, mut total), file_path| {
             match File::open(file_path) {
@@ -531,46 +550,10 @@ fn process_directory(
     }
 
     if !conflict_groups.is_empty() {
-        resolve_conflicts(dir, decisions_path, &conflict_groups, &mut resolved_records)?;
+        resolve_conflicts(decisions_dir, decisions_path, &conflict_groups, &mut resolved_records)?;
     }
 
-    let duplicates_removed = total_seen.saturating_sub(resolved_records.len());
-
-    let mut records = Vec::new();
-    for entry in resolved_records {
-        records.push((entry.key, entry.line));
-    }
-
-    // Ordenar por clave usando orden natural (numérico consciente)
-    records.sort_by(|a, b| natord::compare(&a.0, &b.0));
-
-    let consolidated_name = format!("consolidated_{}.jsonl", timestamp);
-    let consolidated_path = dir.join(consolidated_name);
-    let mut output_file = File::create(&consolidated_path).with_context(|| {
-        format!(
-            "No se pudo crear el archivo consolidado: {}",
-            consolidated_path.display()
-        )
-    })?;
-    for (_, line) in records {
-        writeln!(output_file, "{}", line).with_context(|| {
-            format!(
-                "No se pudo escribir en el archivo consolidado: {}",
-                consolidated_path.display()
-            )
-        })?;
-    }
-
-    println!("Archivo consolidado generado: {}", consolidated_path.display());
-    Ok((
-        consolidated_path.clone(),
-        ConsolidationSummary {
-            files_read: jsonl_files.len(),
-            duplicates_removed,
-            parse_errors: total_skipped,
-            consolidated_file: Some(consolidated_path),
-        },
-    ))
+    Ok((resolved_records, total_seen, total_skipped))
 }
 
 /// Trunca y aplana un texto para usarlo como vista previa en `decisions.csv`.
