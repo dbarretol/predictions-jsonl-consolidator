@@ -1,16 +1,18 @@
+use crate::errors::{AppError, Result};
 use crate::models::ProcessedRecord;
-use anyhow::{Context, Result};
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 
 pub fn write_md(path: &Path, records: &[ProcessedRecord]) -> Result<()> {
-    let mut file = File::create(path)
-        .with_context(|| format!("No se pudo crear el archivo Markdown: {}", path.display()))?;
+    let mut file = File::create(path).map_err(|source| {
+        AppError::io(format!("No se pudo crear el archivo Markdown: {}", path.display()), source)
+    })?;
 
     for record in records {
-        writeln!(file, "## Clave: {}\n\n{}\n", record.key, record.text)
-            .with_context(|| format!("No se pudo escribir en {}", path.display()))?;
+        writeln!(file, "## Clave: {}\n\n{}\n", record.key, record.text).map_err(|source| {
+            AppError::io(format!("No se pudo escribir en {}", path.display()), source)
+        })?;
     }
 
     Ok(())

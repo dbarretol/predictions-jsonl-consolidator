@@ -1,6 +1,6 @@
+use crate::errors::{AppError, Result};
 use crate::models::TokenReport;
 use crate::parser::PredictionLine;
-use anyhow::{bail, Context, Result};
 use fxhash::FxHashMap;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -61,11 +61,13 @@ pub struct ConsolidationSummary {
 /// una consolidación previa).
 pub fn find_jsonl_files(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut jsonl_files = Vec::new();
-    let entries = fs::read_dir(dir)
-        .with_context(|| format!("No se pudo leer la carpeta: {}", dir.display()))?;
+    let entries = fs::read_dir(dir).map_err(|source| {
+        AppError::io(format!("No se pudo leer la carpeta: {}", dir.display()), source)
+    })?;
     for entry in entries {
-        let entry = entry
-            .with_context(|| format!("No se pudo leer una entrada de la carpeta: {}", dir.display()))?;
+        let entry = entry.map_err(|source| {
+            AppError::io(format!("No se pudo leer una entrada de la carpeta: {}", dir.display()), source)
+        })?;
         let path = entry.path();
         if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("jsonl") {
             let filename = path.file_name()
@@ -79,7 +81,7 @@ pub fn find_jsonl_files(dir: &Path) -> Result<Vec<PathBuf>> {
     }
 
     if jsonl_files.is_empty() {
-        bail!("No se encontraron archivos .jsonl en {}", dir.display());
+        return Err(AppError::NoJsonlFiles { dir: dir.to_path_buf() });
     }
 
     Ok(jsonl_files)
@@ -218,8 +220,8 @@ fn resolve_conflicts(
 ) -> Result<()> {
     let Some(decisions_path) = decisions_path else {
         let out_path = dir.join("decisions.csv");
-        let mut writer = csv::Writer::from_path(&out_path).with_context(|| {
-            format!("No se pudo crear el archivo de decisiones: {}", out_path.display())
+        let mut writer = csv::Writer::from_path(&out_path).map_err(|source| {
+            AppError::csv(format!("No se pudo crear el archivo de decisiones: {}", out_path.display()), source)
         })?;
         for group in conflict_groups {
             for entry in group {
@@ -240,30 +242,28 @@ fn resolve_conflicts(
                         text_preview: text_preview(entry.text.as_deref().unwrap_or("")),
                         decision: String::new(),
                     })
-                    .with_context(|| format!("No se pudo escribir en {}", out_path.display()))?;
+                    .map_err(|source| {
+                        AppError::csv(format!("No se pudo escribir en {}", out_path.display()), source)
+                    })?;
             }
         }
-        writer
-            .flush()
-            .with_context(|| format!("No se pudo finalizar {}", out_path.display()))?;
+        writer.flush().map_err(|source| {
+            AppError::io(format!("No se pudo finalizar {}", out_path.display()), source)
+        })?;
 
-        bail!(
-            "Se detectaron {} key(s) con candidatos en conflicto (mismo key+texto, distinta metadata).\n\
-             Complete la columna 'decision' en {} con 'mantener' (puede marcar más de un candidato por key) \
-             o 'ignorar'/vacío para descartar, y vuelva a ejecutar agregando --decisions \"{}\"",
-            conflict_groups.len(),
-            out_path.display(),
-            out_path.display()
-        );
+        return Err(AppError::ConflictsPendingResolution {
+            count: conflict_groups.len(),
+            decisions_path: out_path,
+        });
     };
 
-    let mut reader = csv::Reader::from_path(decisions_path).with_context(|| {
-        format!("No se pudo abrir el archivo de decisiones: {}", decisions_path.display())
+    let mut reader = csv::Reader::from_path(decisions_path).map_err(|source| {
+        AppError::csv(format!("No se pudo abrir el archivo de decisiones: {}", decisions_path.display()), source)
     })?;
     let mut decisions: FxHashMap<String, String> = FxHashMap::default();
     for row in reader.deserialize::<DecisionRow>() {
-        let row = row.with_context(|| {
-            format!("No se pudo leer una fila de {}", decisions_path.display())
+        let row = row.map_err(|source| {
+            AppError::csv(format!("No se pudo leer una fila de {}", decisions_path.display()), source)
         })?;
         decisions.insert(row.candidate_id, row.decision.trim().to_lowercase());
     }
@@ -283,12 +283,10 @@ fn resolve_conflicts(
     }
 
     if !unresolved_keys.is_empty() {
-        bail!(
-            "El archivo de decisiones {} no tiene ningún candidato marcado 'mantener' para estas key(s): {}. \
-             Complételo y vuelva a intentar.",
-            decisions_path.display(),
-            unresolved_keys.join(", ")
-        );
+        return Err(AppError::UnresolvedDecisions {
+            decisions_path: decisions_path.to_path_buf(),
+            keys: unresolved_keys,
+        });
     }
 
     Ok(())

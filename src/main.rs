@@ -1,5 +1,6 @@
 mod cli;
 mod consolidator;
+mod errors;
 mod exporters;
 mod models;
 mod parser;
