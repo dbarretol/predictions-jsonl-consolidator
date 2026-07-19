@@ -2,6 +2,8 @@
 name = "predictions-jsonl-consolidator"
 version = "0.1.0"
 edition = "2024"
+description = "Consolida, deduplica y exporta (TXT/Markdown/CSV) archivos JSONL de predicciones"
+authors = ["dbarretol <57958754+dbarretol@users.noreply.github.com>"]
 
 [dependencies]
 anyhow = "1.0"
