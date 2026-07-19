@@ -65,6 +65,7 @@ cargo run -- example/predictions.jsonl
 | :--- | :--- | :--- |
 | `input` | Ruta al archivo `.jsonl` de entrada. | N/A |
 | `--dir, -d` | Carpeta para buscar y consolidar archivos `.jsonl`. | N/A |
+| `--recursive, -r` | Busca archivos `.jsonl` también en subcarpetas (solo aplica con `--dir` o auto-modo). | Desactivado (solo el nivel superior) |
 | `--out-txt` | Ruta personalizada para el archivo TXT. | `[dir_input]/jsonl_extract/consolidado_[TS].txt` |
 | `--out-md` | Ruta personalizada para el archivo Markdown. | `[dir_input]/jsonl_extract/consolidado_[TS].md` |
 | `--out-csv` | Ruta personalizada para el archivo CSV. | `[dir_input]/jsonl_extract/reporte_tokens_[TS].csv` |
