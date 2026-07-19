@@ -224,6 +224,8 @@ struct ConsolidationSummary {
     parse_errors: usize,
     /// Ruta del `consolidated_*.jsonl` generado, si se combinaron varios archivos.
     consolidated_file: Option<PathBuf>,
+    /// Archivos `.jsonl` que no se pudieron abrir (el consolidado puede quedar incompleto).
+    unreadable_files: Vec<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -290,7 +292,7 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
         }
     }
 
-    let (resolved_records, total_seen, total_skipped) =
+    let (resolved_records, total_seen, total_skipped, unreadable_files) =
         deduplicate_files(&source_files, &base_dir, decisions_path.as_deref())?;
     let duplicates_removed = total_seen.saturating_sub(resolved_records.len());
 
@@ -326,22 +328,17 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
     };
 
     let summary = ConsolidationSummary {
-        files_read: source_files.len(),
+        files_read: source_files.len().saturating_sub(unreadable_files.len()),
         duplicates_removed,
         parse_errors: total_skipped,
         consolidated_file,
+        unreadable_files,
     };
 
+    // Solo se crea jsonl_extract si al menos una ruta de salida usa su valor por
+    // defecto; si las tres son personalizadas (--out-txt/--out-md/--out-csv), no
+    // hace falta crearlo. Los padres de rutas personalizadas también se crean.
     let extract_dir = base_dir.join("jsonl_extract");
-
-    if !extract_dir.exists() {
-        fs::create_dir_all(&extract_dir).with_context(|| {
-            format!(
-                "No se pudo crear el directorio de salida: {}",
-                extract_dir.display()
-            )
-        })?;
-    }
 
     let out_txt_path = args.out_txt.unwrap_or_else(|| {
         extract_dir.join(format!("consolidado_{}.txt", timestamp))
@@ -353,6 +350,14 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
         extract_dir.join(format!("reporte_tokens_{}.csv", timestamp))
     });
 
+    for path in [&out_txt_path, &out_md_path, &out_csv_path] {
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            fs::create_dir_all(parent).with_context(|| {
+                format!("No se pudo crear el directorio de salida: {}", parent.display())
+            })?;
+        }
+    }
+
     // Los registros ya vienen parseados desde `deduplicate_files` (una sola pasada
     // de JSON por línea): solo falta convertirlos a la forma que esperan los reportes.
     let mut processed_records = Vec::new();
@@ -363,6 +368,7 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
             Some(text) => text,
             None => {
                 records_without_text += 1;
+                error!(key = %entry.key, "Registro sin texto extraído");
                 "...".to_string()
             }
         };
@@ -407,6 +413,7 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
 
     println!("\nResumen:");
     println!("  Archivos leídos:            {}", summary.files_read);
+    println!("  Archivos ilegibles:         {}", summary.unreadable_files.len());
     println!("  Líneas procesadas:          {}", lines_processed);
     println!("  Líneas con error de parseo: {}", summary.parse_errors);
     println!("  Duplicados eliminados:      {}", summary.duplicates_removed);
@@ -418,6 +425,19 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
     println!("    - {}", out_txt_path.display());
     println!("    - {}", out_md_path.display());
     println!("    - {}", out_csv_path.display());
+
+    if !summary.unreadable_files.is_empty() {
+        bail!(
+            "No se pudieron leer {} archivo(s), por lo que el resultado puede estar incompleto: {}",
+            summary.unreadable_files.len(),
+            summary
+                .unreadable_files
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
 
     Ok(())
 }
@@ -454,21 +474,22 @@ fn find_jsonl_files(dir: &Path) -> Result<Vec<PathBuf>> {
 /// respuesta), colapsa duplicados exactos y resuelve conflictos de metadata (ver
 /// `resolve_conflicts`). La misma función deduplica tanto un único archivo como
 /// varios, para que ambos modos de entrada compartan la lógica de deduplicación.
-/// Devuelve los registros resueltos junto con el total de líneas vistas y las
-/// líneas descartadas por error de parseo.
+/// Devuelve los registros resueltos junto con el total de líneas vistas, las
+/// líneas descartadas por error de parseo, y los archivos que no se pudieron abrir
+/// (el consolidado puede quedar incompleto si esta lista no está vacía).
 fn deduplicate_files(
     files: &[PathBuf],
     decisions_dir: &Path,
     decisions_path: Option<&Path>,
-) -> Result<(Vec<RecordEntry>, usize, usize)> {
+) -> Result<(Vec<RecordEntry>, usize, usize, Vec<PathBuf>)> {
     // Usamos fold/reduce para mejor paralelismo en lugar de Mutex compartido.
     // Agrupamos por (key, hash del texto): dos líneas con la misma key y el mismo
     // texto son duplicados; si además difieren en metadata (modelo/tokens), el grupo
     // queda con más de una línea distinta y se trata como un conflicto a resolver.
     type Group = FxHashMap<(String, u64), Vec<RecordEntry>>;
-    let (groups, total_skipped, total_seen) = files.par_iter().fold(
-        || (Group::default(), 0usize, 0usize),
-        |(mut groups, mut skipped, mut total), file_path| {
+    let (groups, total_skipped, total_seen, unreadable_files) = files.par_iter().fold(
+        || (Group::default(), 0usize, 0usize, Vec::<PathBuf>::new()),
+        |(mut groups, mut skipped, mut total, mut unreadable), file_path| {
             match File::open(file_path) {
                 Ok(file) => {
                     let reader = BufReader::new(file);
@@ -506,24 +527,29 @@ fn deduplicate_files(
                 }
                 Err(e) => {
                     error!("No se pudo abrir archivo {:?}: {}", file_path, e);
+                    unreadable.push(file_path.clone());
                 }
             }
-            (groups, skipped, total)
+            (groups, skipped, total, unreadable)
         }
     ).reduce(
-        || (Group::default(), 0usize, 0usize),
-        |(mut acc_groups, mut acc_skipped, mut acc_total), (groups, skipped, total)| {
+        || (Group::default(), 0usize, 0usize, Vec::<PathBuf>::new()),
+        |(mut acc_groups, mut acc_skipped, mut acc_total, mut acc_unreadable), (groups, skipped, total, mut unreadable)| {
             for (key, mut entries) in groups {
                 acc_groups.entry(key).or_default().append(&mut entries);
             }
             acc_skipped += skipped;
             acc_total += total;
-            (acc_groups, acc_skipped, acc_total)
+            acc_unreadable.append(&mut unreadable);
+            (acc_groups, acc_skipped, acc_total, acc_unreadable)
         }
     );
 
     if total_skipped > 0 {
         error!("Total de líneas ignoradas por error de parseo: {}", total_skipped);
+    }
+    if !unreadable_files.is_empty() {
+        error!("Total de archivos que no se pudieron abrir: {}", unreadable_files.len());
     }
 
     // Dentro de cada grupo, colapsamos líneas crudas idénticas (duplicado exacto,
@@ -548,7 +574,7 @@ fn deduplicate_files(
         resolve_conflicts(decisions_dir, decisions_path, &conflict_groups, &mut resolved_records)?;
     }
 
-    Ok((resolved_records, total_seen, total_skipped))
+    Ok((resolved_records, total_seen, total_skipped, unreadable_files))
 }
 
 /// Trunca y aplana un texto para usarlo como vista previa en `decisions.csv`.
