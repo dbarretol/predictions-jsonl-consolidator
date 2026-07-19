@@ -7,7 +7,7 @@ La herramienta extrae el contenido transcrito, genera documentos legibles y un r
 ## Características
 
 - **Ordenamiento Inteligente**: Todas las entradas se ordenan alfabéticamente por su clave (`key`).
-- **Consolidación TXT**: Genera un archivo de texto plano con todo el contenido concatenado.
+- **Consolidación TXT**: Genera un archivo de texto plano con todo el contenido concatenado. Cada texto va precedido por un separador `=== {key} ===` para poder rastrear de qué registro proviene (desactivable con `--no-keys`).
 - **Consolidación Markdown**: Genera un archivo `.md` estructurado con encabezados por cada clave, ideal para revisión humana.
 - **Reporte de Tokens (CSV)**: Genera un reporte detallado que incluye:
   - Versión del modelo.
@@ -44,6 +44,7 @@ cargo run -- --dir <RUTA_A_LA_CARPETA> [OPCIONES]
 ### Comportamiento por defecto
 - **Archivo individual**: Crea una carpeta llamada `jsonl_extract` en el mismo directorio donde se encuentra el archivo de entrada.
 - **Carpeta (--dir)**: Consolida todos los `.jsonl` encontrados en un archivo `consolidated_YYYYMMDD_HHMMSS.jsonl` en la carpeta indicada, y genera los reportes en una subcarpeta `jsonl_extract`.
+- **Ubicación de los reportes**: es una decisión deliberada mantener `jsonl_extract/` como subcarpeta separada (en vez de guardar TXT/MD/CSV junto al `.jsonl` consolidado con el mismo prefijo), para no mezclar los `.jsonl` de origen/consolidado con los reportes derivados.
 - **Nombres de archivo**: Todos los archivos generados (`.jsonl` consolidado, `.txt`, `.md`, `.csv`) incluyen un timestamp (`YYYYMMDD_HHMMSS`) para evitar sobreescrituras.
 - **Rutas de salida personalizadas** (`--out-txt`/`--out-md`/`--out-csv`): se crean los directorios padre que falten. `jsonl_extract` solo se crea si al menos una de las tres rutas de salida sigue usando su valor por defecto.
 - **Archivos `.jsonl` ilegibles** (en modo `--dir` o auto-modo): no detienen la consolidación de los demás archivos, pero el resultado puede quedar incompleto. Se cuentan y se listan en el resumen final, y el programa termina con código de salida distinto de cero para que no pase desapercibido.
@@ -68,6 +69,7 @@ cargo run -- example/predictions.jsonl
 | `--out-md` | Ruta personalizada para el archivo Markdown. | `[dir_input]/jsonl_extract/consolidado_[TS].md` |
 | `--out-csv` | Ruta personalizada para el archivo CSV. | `[dir_input]/jsonl_extract/reporte_tokens_[TS].csv` |
 | `--decisions` | Ruta a un `decisions.csv` ya completado, para resolver conflictos de deduplicación de una corrida previa. | N/A |
+| `--no-keys` | Omite el separador `=== {key} ===` antes de cada texto en el TXT de salida. | Desactivado (los separadores se incluyen) |
 | `-h, --help` | Muestra la ayuda del programa. | N/A |
 | `-V, --version` | Muestra la versión del programa. | N/A |
 
