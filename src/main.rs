@@ -55,7 +55,17 @@ struct TokenReport {
 }
 
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(
+    author,
+    version,
+    about,
+    long_about = None,
+    after_help = "Ejemplos:\n  \
+        predictions-jsonl-consolidator predicciones.jsonl\n  \
+        predictions-jsonl-consolidator --dir carpeta_con_jsonl\n  \
+        predictions-jsonl-consolidator --dir carpeta --out-csv reporte.csv\n  \
+        predictions-jsonl-consolidator    (sin argumentos: usa la carpeta actual)"
+)]
 struct Args {
     /// Archivo JSONL de entrada (opcional si se usa --dir)
     #[arg(conflicts_with = "dir")]
