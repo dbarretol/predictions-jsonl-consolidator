@@ -65,8 +65,35 @@ cargo run -- example/predictions.jsonl
 | `--out-txt` | Ruta personalizada para el archivo TXT. | `[dir_input]/jsonl_extract/consolidado_[TS].txt` |
 | `--out-md` | Ruta personalizada para el archivo Markdown. | `[dir_input]/jsonl_extract/consolidado_[TS].md` |
 | `--out-csv` | Ruta personalizada para el archivo CSV. | `[dir_input]/jsonl_extract/reporte_tokens_[TS].csv` |
+| `--decisions` | Ruta a un `decisions.csv` ya completado, para resolver conflictos de deduplicación de una corrida previa. | N/A |
 | `-h, --help` | Muestra la ayuda del programa. | N/A |
 | `-V, --version` | Muestra la versión del programa. | N/A |
+
+## Deduplicación (modo `--dir`)
+
+Al consolidar varios archivos, dos líneas se consideran **duplicadas** si tienen la misma
+`key` **y** el mismo texto extraído de la respuesta (`response.candidates[0].content.parts[0].text`).
+La metadata (modelo, tokens, traffic type) no forma parte de la clave de deduplicación.
+
+- Si dos líneas duplicadas son además idénticas byte a byte (misma metadata), se colapsan
+  automáticamente sin intervención: no hay ambigüedad sobre qué conservar.
+- Si dos líneas comparten `key` y texto pero **difieren en metadata** (ej. mismo texto
+  generado por dos modelos distintos, o con distinto conteo de tokens), es un **conflicto**:
+  la herramienta no elige por vos. En su lugar:
+  1. Se detiene sin generar el consolidado ni los reportes.
+  2. Escribe `decisions.csv` en la carpeta procesada, con una fila por candidato en conflicto
+     (`key`, `candidate_id`, `source_file`, `model`, tokens, una vista previa del texto y una
+     columna `decision` vacía).
+  3. Completá la columna `decision` con `mantener` (podés marcar más de un candidato por
+     `key` si querés conservar ambas variantes) o `ignorar`/vacío para descartarlo.
+  4. Volvé a ejecutar agregando `--decisions decisions.csv`. Si alguna `key` queda sin ningún
+     candidato marcado `mantener`, la ejecución se detiene de nuevo indicando cuáles faltan.
+
+Este flujo evita que la elección de "cuál sobrevive" dependa del orden no determinista de la
+consolidación paralela: siempre es una decisión explícita registrada en `decisions.csv`.
+
+> Nota: el modo de archivo único (`input` sin `--dir`) todavía no deduplica — ver plan de
+> mejoras, tarea 2.2.
 
 ## Estructura del CSV de Salida
 
