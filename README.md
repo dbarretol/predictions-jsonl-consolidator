@@ -71,8 +71,21 @@ cargo run -- example/predictions.jsonl
 | `--out-csv` | Ruta personalizada para el archivo CSV. | `[dir_input]/jsonl_extract/reporte_tokens_[TS].csv` |
 | `--decisions` | Ruta a un `decisions.csv` ya completado, para resolver conflictos de deduplicación de una corrida previa. | N/A |
 | `--no-keys` | Omite el separador `=== {key} ===` antes de cada texto en el TXT de salida. | Desactivado (los separadores se incluyen) |
+| `--verbose, -v` | Muestra diagnóstico detallado (tiempo por archivo, throughput) además de los errores. | Desactivado |
+| `--quiet, -q` | Silencia el diagnóstico de fondo y la barra de progreso; solo muestra errores. | Desactivado |
 | `-h, --help` | Muestra la ayuda del programa. | N/A |
 | `-V, --version` | Muestra la versión del programa. | N/A |
+
+`--verbose` y `--quiet` son mutuamente excluyentes. La variable de entorno `RUST_LOG`,
+si está definida, tiene prioridad sobre ambos (p. ej. `RUST_LOG=predictions_jsonl_consolidator=trace`).
+
+## Progreso y diagnóstico
+
+Al consolidar, se muestra una barra de progreso con la cantidad de líneas procesadas
+(se oculta con `--quiet`). Con `--verbose` además se registra, por cada archivo, el
+tiempo que tomó procesarlo y la cantidad de líneas, más un resumen de throughput
+(líneas/segundo) al finalizar — útil para diagnosticar archivos grandes o carpetas
+con muchos archivos.
 
 ## Deduplicación
 
