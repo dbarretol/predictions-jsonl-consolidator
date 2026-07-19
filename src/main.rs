@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use tracing::{error, info};
+use tracing::error;
 
 impl From<PredictionLine> for TokenReport {
     fn from(pred: PredictionLine) -> Self {
@@ -396,7 +396,7 @@ fn process_directory(dir: &Path, timestamp: &str) -> Result<(PathBuf, Consolidat
         ));
     }
 
-    info!("Consolidando {} archivos JSONL...", jsonl_files.len());
+    println!("Consolidando {} archivos JSONL...", jsonl_files.len());
 
     // Usamos fold/reduce para mejor paralelismo en lugar de Mutex compartido
     // Ahora acumulamos RecordEntry en un Vec para mantener la consistencia
