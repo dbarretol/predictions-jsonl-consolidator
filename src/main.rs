@@ -98,9 +98,17 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
         }
     }
 
-    let (resolved_records, total_seen, total_skipped, unreadable_files) =
-        deduplicate_files(&source_files, &base_dir, decisions_path.as_deref(), !args.quiet)?;
-    let duplicates_removed = total_seen.saturating_sub(resolved_records.len());
+    let outcome = deduplicate_files(&source_files, &base_dir, decisions_path.as_deref(), !args.quiet)?;
+    let resolved_records = outcome.records;
+    let total_seen = outcome.total_seen;
+    let total_skipped = outcome.parse_errors;
+    let unreadable_files = outcome.unreadable_files;
+    let discarded_by_decision = outcome.discarded_by_decision;
+    // Los duplicados exactos son total_seen menos lo que sobrevivió menos lo que se
+    // descartó por decisión explícita (eso no es un duplicado, ver 6.6).
+    let duplicates_removed = total_seen
+        .saturating_sub(resolved_records.len())
+        .saturating_sub(discarded_by_decision);
 
     // El archivo consolidated_*.jsonl solo tiene sentido cuando de verdad se combinan
     // varios archivos de origen.
@@ -136,6 +144,7 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
     let summary = ConsolidationSummary {
         files_read: source_files.len().saturating_sub(unreadable_files.len()),
         duplicates_removed,
+        discarded_by_decision,
         parse_errors: total_skipped,
         consolidated_file,
         unreadable_files,
@@ -200,6 +209,9 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
     println!("  Líneas procesadas:          {}", lines_processed);
     println!("  Líneas con error de parseo: {}", summary.parse_errors);
     println!("  Duplicados eliminados:      {}", summary.duplicates_removed);
+    if summary.discarded_by_decision > 0 {
+        println!("  Descartados por decisión:   {}", summary.discarded_by_decision);
+    }
     println!("  Registros sin texto:        {}", records_without_text);
     println!("  Archivos generados:");
     if let Some(consolidated) = &summary.consolidated_file {

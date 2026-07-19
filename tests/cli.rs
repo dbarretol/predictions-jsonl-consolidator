@@ -200,6 +200,170 @@ fn metadata_conflict_blocks_and_writes_decisions_csv() {
     assert_eq!(rows.len(), 2, "debe listar los dos candidatos en conflicto");
 }
 
+/// Marca "mantener" en `decisions.csv` para el candidato cuyo `model` coincide con
+/// `keep_model`, dejando el resto sin marcar (se descartan como "ignorar").
+fn mark_decision(decisions_path: &Path, keep_model: &str) {
+    let mut reader = csv::Reader::from_path(decisions_path).unwrap();
+    let headers = reader.headers().unwrap().clone();
+    let decision_idx = headers.iter().position(|h| h == "decision").unwrap();
+    let model_idx = headers.iter().position(|h| h == "model").unwrap();
+    let rows: Vec<csv::StringRecord> = reader
+        .records()
+        .map(|r| r.unwrap())
+        .map(|row| {
+            if row.get(model_idx) == Some(keep_model) {
+                let mut fields: Vec<String> = row.iter().map(String::from).collect();
+                fields[decision_idx] = "mantener".to_string();
+                csv::StringRecord::from(fields)
+            } else {
+                row
+            }
+        })
+        .collect();
+
+    let mut writer = csv::Writer::from_path(decisions_path).unwrap();
+    writer.write_record(&headers).unwrap();
+    for row in &rows {
+        writer.write_record(row).unwrap();
+    }
+    writer.flush().unwrap();
+}
+
+#[test]
+fn decisions_workflow_keeps_marked_candidate_on_rerun() {
+    let dir = tempdir().unwrap();
+    let input = dir.path().join("preds.jsonl");
+    let content = [
+        line_full("item-1", "Hola mundo", "model-a", 10),
+        line_full("item-1", "Hola mundo", "model-b", 20),
+    ]
+    .join("\n");
+    fs::write(&input, content).unwrap();
+
+    cmd().arg(&input).arg("--quiet").assert().failure().code(1);
+
+    let decisions_path = dir.path().join("decisions.csv");
+    mark_decision(&decisions_path, "model-b");
+
+    cmd()
+        .arg(&input)
+        .arg("--quiet")
+        .arg("--decisions")
+        .arg(&decisions_path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Descartados por decisión:   1"))
+        .stdout(predicate::str::contains("Duplicados eliminados:      0"));
+
+    let txt = fs::read_to_string(find_file_with_ext(&dir.path().join("jsonl_extract"), "txt")).unwrap();
+    assert!(txt.contains("=== item-1 ==="));
+    assert!(txt.contains("Hola mundo"));
+
+    let csv_path = find_file_with_ext(&dir.path().join("jsonl_extract"), "csv");
+    let mut reader = csv::Reader::from_path(csv_path).unwrap();
+    let rows: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(rows.len(), 1, "solo el candidato marcado 'mantener' debe sobrevivir");
+    assert_eq!(rows[0].get(1), Some("model-b"));
+}
+
+#[test]
+fn decisions_without_any_kept_candidate_blocks_with_clear_error() {
+    let dir = tempdir().unwrap();
+    let input = dir.path().join("preds.jsonl");
+    let content = [
+        line_full("item-1", "Hola mundo", "model-a", 10),
+        line_full("item-1", "Hola mundo", "model-b", 20),
+    ]
+    .join("\n");
+    fs::write(&input, content).unwrap();
+
+    cmd().arg(&input).arg("--quiet").assert().failure().code(1);
+
+    let decisions_path = dir.path().join("decisions.csv");
+    // No se marca ningún candidato como "mantener": la key queda sin resolver.
+
+    cmd()
+        .arg(&input)
+        .arg("--quiet")
+        .arg("--decisions")
+        .arg(&decisions_path)
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("no tiene ningún candidato marcado"));
+}
+
+#[test]
+fn recursive_flag_finds_files_in_subfolders() {
+    let dir = tempdir().unwrap();
+    let sub = dir.path().join("subcarpeta");
+    fs::create_dir(&sub).unwrap();
+    fs::write(sub.join("nested.jsonl"), format!("{}\n", line("item-1", "Anidado"))).unwrap();
+
+    // Sin --recursive, el nivel superior no tiene ningún .jsonl: falla.
+    cmd()
+        .arg("--dir")
+        .arg(dir.path())
+        .arg("--quiet")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("No se encontraron archivos"));
+
+    // Con --recursive sí se encuentra y procesa el archivo de la subcarpeta.
+    cmd()
+        .arg("--dir")
+        .arg(dir.path())
+        .arg("--recursive")
+        .arg("--quiet")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Líneas procesadas:          1"));
+}
+
+#[test]
+fn no_keys_flag_omits_separators_in_txt() {
+    let dir = tempdir().unwrap();
+    let input = dir.path().join("preds.jsonl");
+    fs::write(&input, format!("{}\n", line("item-1", "Hola mundo"))).unwrap();
+
+    cmd().arg(&input).arg("--quiet").arg("--no-keys").assert().success();
+
+    let txt = fs::read_to_string(find_file_with_ext(&dir.path().join("jsonl_extract"), "txt")).unwrap();
+    assert!(!txt.contains("=== item-1 ==="));
+    assert!(txt.contains("Hola mundo"));
+}
+
+#[cfg(windows)]
+#[test]
+fn unreadable_file_in_dir_mode_reports_and_fails() {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("good.jsonl"), format!("{}\n", line("item-1", "Hola mundo"))).unwrap();
+    let locked_path = dir.path().join("locked.jsonl");
+    fs::write(&locked_path, format!("{}\n", line("item-2", "Bloqueado"))).unwrap();
+
+    // share_mode(0): mientras este handle esté vivo, ningún otro proceso (ni siquiera
+    // el binario bajo prueba) puede abrir el archivo; simula un archivo ilegible.
+    let _lock = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(&locked_path)
+        .unwrap();
+
+    cmd()
+        .arg("--dir")
+        .arg(dir.path())
+        .arg("--quiet")
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("Archivos ilegibles:         1"))
+        .stderr(predicate::str::contains("No se pudieron leer"));
+
+    drop(_lock);
+}
+
 #[test]
 fn example_fixture_processes_successfully() {
     let example_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("example/predictions.jsonl");

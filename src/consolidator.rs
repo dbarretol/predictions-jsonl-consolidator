@@ -50,10 +50,25 @@ struct DecisionRow {
     decision: String,
 }
 
+/// Resultado de deduplicar uno o más archivos. Separa los descartes "automáticos"
+/// (duplicados exactos, sin ambigüedad) de los descartes explícitos vía
+/// `decisions.csv` (`ignorar`), que no son duplicados sino decisiones humanas.
+pub struct DeduplicationOutcome {
+    pub records: Vec<RecordEntry>,
+    pub total_seen: usize,
+    pub parse_errors: usize,
+    pub unreadable_files: Vec<PathBuf>,
+    pub discarded_by_decision: usize,
+}
+
 #[derive(Default)]
 pub struct ConsolidationSummary {
     pub files_read: usize,
+    /// Duplicados exactos colapsados automáticamente (misma key+texto+metadata).
     pub duplicates_removed: usize,
+    /// Candidatos descartados por decisión explícita en `decisions.csv` (`ignorar`).
+    /// No son duplicados: son variantes distintas que el usuario eligió no conservar.
+    pub discarded_by_decision: usize,
     pub parse_errors: usize,
     /// Ruta del `consolidated_*.jsonl` generado, si se combinaron varios archivos.
     pub consolidated_file: Option<PathBuf>,
@@ -123,7 +138,7 @@ pub fn deduplicate_files(
     decisions_dir: &Path,
     decisions_path: Option<&Path>,
     show_progress: bool,
-) -> Result<(Vec<RecordEntry>, usize, usize, Vec<PathBuf>)> {
+) -> Result<DeduplicationOutcome> {
     let started_at = Instant::now();
 
     let progress = if show_progress {
@@ -152,34 +167,46 @@ pub fn deduplicate_files(
                     let mut file_lines = 0usize;
                     let reader = BufReader::new(file);
                     for line in reader.lines() {
-                        progress.inc(1);
-                        if let Ok(line) = line {
-                            let trimmed = line.trim();
-                            if trimmed.is_empty() {
-                                continue;
+                        match line {
+                            Ok(line) => {
+                                let trimmed = line.trim();
+                                if trimmed.is_empty() {
+                                    // No cuenta hacia la barra de progreso ni hacia
+                                    // ningún total: no es una línea con contenido.
+                                    continue;
+                                }
+                                progress.inc(1);
+                                file_lines += 1;
+
+                                // Parseamos la línea una sola vez: el registro completo
+                                // (`TokenReport`) queda listo desde acá, para no tener que
+                                // volver a parsear el JSON al generar los reportes finales.
+                                if let Ok(pred) = serde_json::from_str::<PredictionLine>(trimmed) {
+                                    let text = pred.extract_text().map(|s| s.to_string());
+                                    let text_hash = fxhash::hash64(text.as_deref().unwrap_or("").as_bytes());
+                                    total += 1;
+
+                                    let key = pred.key.clone();
+                                    let report = TokenReport::from(pred);
+
+                                    groups.entry((key.clone(), text_hash)).or_default().push(RecordEntry {
+                                        key,
+                                        line: trimmed.to_string(),
+                                        text,
+                                        report,
+                                        source_file: file_path.clone(),
+                                    });
+                                } else {
+                                    error!("No se pudo parsear registro en archivo {:?}: {}", file_path, trimmed.chars().take(50).collect::<String>());
+                                    skipped += 1;
+                                }
                             }
-                            file_lines += 1;
-
-                            // Parseamos la línea una sola vez: el registro completo
-                            // (`TokenReport`) queda listo desde acá, para no tener que
-                            // volver a parsear el JSON al generar los reportes finales.
-                            if let Ok(pred) = serde_json::from_str::<PredictionLine>(trimmed) {
-                                let text = pred.extract_text().map(|s| s.to_string());
-                                let text_hash = fxhash::hash64(text.as_deref().unwrap_or("").as_bytes());
-                                total += 1;
-
-                                let key = pred.key.clone();
-                                let report = TokenReport::from(pred);
-
-                                groups.entry((key.clone(), text_hash)).or_default().push(RecordEntry {
-                                    key,
-                                    line: trimmed.to_string(),
-                                    text,
-                                    report,
-                                    source_file: file_path.clone(),
-                                });
-                            } else {
-                                error!("No se pudo parsear registro en archivo {:?}: {}", file_path, trimmed.chars().take(50).collect::<String>());
+                            Err(e) => {
+                                // Típicamente una línea con bytes que no son UTF-8 válido
+                                // (ej. archivo en Latin-1): se cuenta como error de parseo
+                                // en vez de perderse en silencio.
+                                progress.inc(1);
+                                error!("No se pudo leer una línea de {:?}: {}", file_path, e);
                                 skipped += 1;
                             }
                         }
@@ -248,11 +275,19 @@ pub fn deduplicate_files(
         }
     }
 
-    if !conflict_groups.is_empty() {
-        resolve_conflicts(decisions_dir, decisions_path, conflict_groups, &mut resolved_records)?;
-    }
+    let discarded_by_decision = if !conflict_groups.is_empty() {
+        resolve_conflicts(decisions_dir, decisions_path, conflict_groups, &mut resolved_records)?
+    } else {
+        0
+    };
 
-    Ok((resolved_records, total_seen, total_skipped, unreadable_files))
+    Ok(DeduplicationOutcome {
+        records: resolved_records,
+        total_seen,
+        parse_errors: total_skipped,
+        unreadable_files,
+        discarded_by_decision,
+    })
 }
 
 /// Trunca y aplana un texto para usarlo como vista previa en `decisions.csv`.
@@ -282,7 +317,7 @@ fn resolve_conflicts(
     decisions_path: Option<&Path>,
     conflict_groups: Vec<Vec<RecordEntry>>,
     resolved_records: &mut Vec<RecordEntry>,
-) -> Result<()> {
+) -> Result<usize> {
     let Some(decisions_path) = decisions_path else {
         let out_path = dir.join("decisions.csv");
         let mut writer = csv::Writer::from_path(&out_path).map_err(|source| {
@@ -334,10 +369,12 @@ fn resolve_conflicts(
     }
 
     let mut unresolved_keys = Vec::new();
+    let mut discarded_by_decision = 0usize;
     for group in conflict_groups {
         // Clonamos solo la key (por si el grupo queda sin resolver); los candidatos
         // conservados se mueven directo a `resolved_records`, sin clonar cada uno.
         let group_key = group[0].key.clone();
+        let group_size = group.len();
         let mut kept: Vec<RecordEntry> = group
             .into_iter()
             .filter(|entry| decisions.get(&entry.candidate_id()).map(|d| d.as_str()) == Some("mantener"))
@@ -345,6 +382,7 @@ fn resolve_conflicts(
         if kept.is_empty() {
             unresolved_keys.push(group_key);
         } else {
+            discarded_by_decision += group_size - kept.len();
             resolved_records.append(&mut kept);
         }
     }
@@ -356,5 +394,5 @@ fn resolve_conflicts(
         });
     }
 
-    Ok(())
+    Ok(discarded_by_decision)
 }

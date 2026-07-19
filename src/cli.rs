@@ -51,7 +51,8 @@ pub struct Args {
     #[arg(long, short = 'v', conflicts_with = "quiet")]
     pub verbose: bool,
 
-    /// Silencia el diagnóstico de fondo y la barra de progreso; solo muestra errores
+    /// Silencia el diagnóstico de fondo (tracing) y la barra de progreso; el resumen
+    /// final y los errores se siguen mostrando
     #[arg(long, short = 'q', conflicts_with = "verbose")]
     pub quiet: bool,
 }
