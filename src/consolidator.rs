@@ -209,7 +209,7 @@ pub fn deduplicate_files(
     }
 
     if !conflict_groups.is_empty() {
-        resolve_conflicts(decisions_dir, decisions_path, &conflict_groups, &mut resolved_records)?;
+        resolve_conflicts(decisions_dir, decisions_path, conflict_groups, &mut resolved_records)?;
     }
 
     Ok((resolved_records, total_seen, total_skipped, unreadable_files))
@@ -233,10 +233,14 @@ fn text_preview(text: &str) -> String {
 /// `decisions_path`: aplica esas decisiones y agrega los candidatos conservados a
 /// `resolved_records`; si algún grupo queda sin ningún candidato marcado "mantener",
 /// detiene la ejecución señalando qué keys faltan por resolver.
+///
+/// Toma `conflict_groups` por valor (no por referencia) porque la rama de resolución
+/// mueve los `RecordEntry` conservados directamente a `resolved_records`, sin
+/// clonarlos: son la única llamadora (`deduplicate_files`) no los necesita después.
 fn resolve_conflicts(
     dir: &Path,
     decisions_path: Option<&Path>,
-    conflict_groups: &[Vec<RecordEntry>],
+    conflict_groups: Vec<Vec<RecordEntry>>,
     resolved_records: &mut Vec<RecordEntry>,
 ) -> Result<()> {
     let Some(decisions_path) = decisions_path else {
@@ -244,7 +248,7 @@ fn resolve_conflicts(
         let mut writer = csv::Writer::from_path(&out_path).map_err(|source| {
             AppError::csv(format!("No se pudo crear el archivo de decisiones: {}", out_path.display()), source)
         })?;
-        for group in conflict_groups {
+        for group in &conflict_groups {
             for entry in group {
                 writer
                     .serialize(DecisionRow {
@@ -291,13 +295,15 @@ fn resolve_conflicts(
 
     let mut unresolved_keys = Vec::new();
     for group in conflict_groups {
+        // Clonamos solo la key (por si el grupo queda sin resolver); los candidatos
+        // conservados se mueven directo a `resolved_records`, sin clonar cada uno.
+        let group_key = group[0].key.clone();
         let mut kept: Vec<RecordEntry> = group
-            .iter()
+            .into_iter()
             .filter(|entry| decisions.get(&entry.candidate_id()).map(|d| d.as_str()) == Some("mantener"))
-            .cloned()
             .collect();
         if kept.is_empty() {
-            unresolved_keys.push(group[0].key.clone());
+            unresolved_keys.push(group_key);
         } else {
             resolved_records.append(&mut kept);
         }
