@@ -69,10 +69,11 @@ cargo run -- example/predictions.jsonl
 | `-h, --help` | Muestra la ayuda del programa. | N/A |
 | `-V, --version` | Muestra la versión del programa. | N/A |
 
-## Deduplicación (modo `--dir`)
+## Deduplicación
 
-Al consolidar varios archivos, dos líneas se consideran **duplicadas** si tienen la misma
-`key` **y** el mismo texto extraído de la respuesta (`response.candidates[0].content.parts[0].text`).
+Tanto el modo de archivo único como el modo `--dir` pasan por la misma lógica de
+deduplicación. Dos líneas se consideran **duplicadas** si tienen la misma `key` **y**
+el mismo texto extraído de la respuesta (`response.candidates[0].content.parts[0].text`).
 La metadata (modelo, tokens, traffic type) no forma parte de la clave de deduplicación.
 
 - Si dos líneas duplicadas son además idénticas byte a byte (misma metadata), se colapsan
@@ -91,9 +92,6 @@ La metadata (modelo, tokens, traffic type) no forma parte de la clave de dedupli
 
 Este flujo evita que la elección de "cuál sobrevive" dependa del orden no determinista de la
 consolidación paralela: siempre es una decisión explícita registrada en `decisions.csv`.
-
-> Nota: el modo de archivo único (`input` sin `--dir`) todavía no deduplica — ver plan de
-> mejoras, tarea 2.2.
 
 ## Estructura del CSV de Salida
 
