@@ -42,4 +42,8 @@ pub struct Args {
     /// Omite el separador "=== {key} ===" antes de cada texto en el TXT de salida
     #[arg(long)]
     pub no_keys: bool,
+
+    /// Busca archivos .jsonl también en subcarpetas (solo aplica con --dir o auto-modo)
+    #[arg(long, short = 'r')]
+    pub recursive: bool,
 }

@@ -58,7 +58,7 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
     // de archivos a deduplicar: la diferencia es solo cuántos hay y si, al haber más
     // de uno, corresponde escribir un consolidated_*.jsonl con el resultado.
     let (base_dir, source_files, is_dir_scan) = if let Some(dir) = &args.dir {
-        (dir.clone(), find_jsonl_files(dir)?, true)
+        (dir.clone(), find_jsonl_files(dir, args.recursive)?, true)
     } else if let Some(input) = &args.input {
         let base = input.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
         (base, vec![input.clone()], false)
@@ -69,7 +69,7 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
             "No se especificó archivo ni carpeta; usando la carpeta actual: {}",
             current_dir.display()
         );
-        (current_dir.clone(), find_jsonl_files(&current_dir)?, true)
+        (current_dir.clone(), find_jsonl_files(&current_dir, args.recursive)?, true)
     };
 
     if is_dir_scan {

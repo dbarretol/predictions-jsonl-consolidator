@@ -9,6 +9,7 @@ use std::io::BufRead;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use tracing::error;
+use walkdir::WalkDir;
 
 #[derive(Debug, Clone)]
 pub struct RecordEntry {
@@ -57,24 +58,44 @@ pub struct ConsolidationSummary {
     pub unreadable_files: Vec<PathBuf>,
 }
 
-/// Lista los archivos `.jsonl` de una carpeta a consolidar (excluye resultados de
-/// una consolidación previa).
-pub fn find_jsonl_files(dir: &Path) -> Result<Vec<PathBuf>> {
-    let mut jsonl_files = Vec::new();
-    let entries = fs::read_dir(dir).map_err(|source| {
-        AppError::io(format!("No se pudo leer la carpeta: {}", dir.display()), source)
-    })?;
-    for entry in entries {
-        let entry = entry.map_err(|source| {
-            AppError::io(format!("No se pudo leer una entrada de la carpeta: {}", dir.display()), source)
-        })?;
-        let path = entry.path();
-        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("jsonl") {
-            let filename = path.file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
+/// `true` si `path` es un `.jsonl` candidato a consolidarse (excluye resultados de
+/// una consolidación previa, que ya llevan el prefijo `consolidated_`).
+fn is_candidate_jsonl(path: &Path) -> bool {
+    if path.extension().and_then(|s| s.to_str()) != Some("jsonl") {
+        return false;
+    }
+    let filename = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    !filename.starts_with("consolidated_")
+}
 
-            if !filename.starts_with("consolidated_") {
+/// Lista los archivos `.jsonl` a consolidar dentro de una carpeta. Por defecto solo
+/// mira el nivel superior; con `recursive` también recorre subcarpetas.
+pub fn find_jsonl_files(dir: &Path, recursive: bool) -> Result<Vec<PathBuf>> {
+    let mut jsonl_files = Vec::new();
+
+    if recursive {
+        for entry in WalkDir::new(dir) {
+            let entry = entry.map_err(|source| {
+                AppError::io(
+                    format!("No se pudo recorrer la carpeta: {}", dir.display()),
+                    source.into(),
+                )
+            })?;
+            let path = entry.path();
+            if path.is_file() && is_candidate_jsonl(path) {
+                jsonl_files.push(path.to_path_buf());
+            }
+        }
+    } else {
+        let entries = fs::read_dir(dir).map_err(|source| {
+            AppError::io(format!("No se pudo leer la carpeta: {}", dir.display()), source)
+        })?;
+        for entry in entries {
+            let entry = entry.map_err(|source| {
+                AppError::io(format!("No se pudo leer una entrada de la carpeta: {}", dir.display()), source)
+            })?;
+            let path = entry.path();
+            if path.is_file() && is_candidate_jsonl(&path) {
                 jsonl_files.push(path);
             }
         }
