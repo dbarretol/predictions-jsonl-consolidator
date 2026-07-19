@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::BufRead;
 use std::io::BufReader;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tracing::debug;
@@ -201,13 +202,25 @@ pub fn deduplicate_files(
                                     skipped += 1;
                                 }
                             }
-                            Err(e) => {
-                                // Típicamente una línea con bytes que no son UTF-8 válido
-                                // (ej. archivo en Latin-1): se cuenta como error de parseo
-                                // en vez de perderse en silencio.
+                            Err(e) if e.kind() == ErrorKind::InvalidData => {
+                                // Bytes que no son UTF-8 válido (ej. archivo en Latin-1):
+                                // `read_line` ya consumió esa línea antes de fallar la
+                                // conversión, así que la próxima iteración avanza sola.
+                                // Se cuenta como error de parseo en vez de perderse en silencio.
                                 progress.inc(1);
                                 error!("No se pudo leer una línea de {:?}: {}", file_path, e);
                                 skipped += 1;
+                            }
+                            Err(e) => {
+                                // Error de E/S real (no de encoding): a diferencia del caso
+                                // anterior, el stream puede no haber avanzado, así que
+                                // reintentar podría repetir el mismo error indefinidamente
+                                // (ej. sector dañado). Se corta la lectura de este archivo y
+                                // se cuenta como ilegible/incompleto en vez de arriesgar un
+                                // loop infinito.
+                                error!("Error de E/S leyendo {:?}, se corta la lectura del archivo: {}", file_path, e);
+                                unreadable.push(file_path.clone());
+                                break;
                             }
                         }
                     }
