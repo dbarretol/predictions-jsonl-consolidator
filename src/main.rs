@@ -1,7 +1,7 @@
 use anyhow::{bail, Context, Result};
 use chrono::Local;
 use clap::Parser;
-use fxhash::FxHashSet;
+use fxhash::FxHashMap;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
@@ -86,6 +86,11 @@ struct Args {
     /// Archivo de salida CSV para metadata (opcional, se genera con timestamp por defecto)
     #[arg(long)]
     out_csv: Option<PathBuf>,
+
+    /// Archivo decisions.csv ya completado, para resolver conflictos de deduplicación
+    /// (mismo key+texto con distinta metadata) detectados en una corrida previa
+    #[arg(long)]
+    decisions: Option<PathBuf>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -151,8 +156,38 @@ struct Response {
 #[derive(Debug, Clone)]
 struct RecordEntry {
     key: String,
-    text_hash: u64,
     line: String,
+    text: String,
+    source_file: PathBuf,
+    model: String,
+    prompt_tokens: u32,
+    candidate_tokens: u32,
+    total_tokens: u32,
+}
+
+impl RecordEntry {
+    /// Identificador estable del candidato entre corridas (hash de la línea cruda),
+    /// usado para enlazar `decisions.csv` con el candidato que describe.
+    fn candidate_id(&self) -> String {
+        format!("{:016x}", fxhash::hash64(self.line.as_bytes()))
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct DecisionRow {
+    key: String,
+    candidate_id: String,
+    source_file: String,
+    model: String,
+    #[serde(rename = "Prompt Tokens")]
+    prompt_tokens: u32,
+    #[serde(rename = "Candidate Tokens")]
+    candidate_tokens: u32,
+    #[serde(rename = "Total Tokens")]
+    total_tokens: u32,
+    text_preview: String,
+    /// "mantener" para conservar este candidato, "ignorar" (o vacío) para descartarlo.
+    decision: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -228,8 +263,9 @@ fn pause_before_exit() {
 }
 
 fn run(args: Args, timestamp: &str) -> Result<()> {
+    let decisions_path = args.decisions.clone();
     let (input_path, summary) = if let Some(dir) = &args.dir {
-        process_directory(dir, timestamp)?
+        process_directory(dir, timestamp, decisions_path.as_deref())?
     } else if let Some(input) = args.input {
         (
             input,
@@ -245,7 +281,7 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
             "No se especificó archivo ni carpeta; usando la carpeta actual: {}",
             current_dir.display()
         );
-        process_directory(&current_dir, timestamp)?
+        process_directory(&current_dir, timestamp, decisions_path.as_deref())?
     };
 
     let input_dir = input_path.parent().unwrap_or_else(|| Path::new("."));
@@ -373,7 +409,11 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
     Ok(())
 }
 
-fn process_directory(dir: &Path, timestamp: &str) -> Result<(PathBuf, ConsolidationSummary)> {
+fn process_directory(
+    dir: &Path,
+    timestamp: &str,
+    decisions_path: Option<&Path>,
+) -> Result<(PathBuf, ConsolidationSummary)> {
     let mut jsonl_files = Vec::new();
     let entries = fs::read_dir(dir)
         .with_context(|| format!("No se pudo leer la carpeta: {}", dir.display()))?;
@@ -409,11 +449,14 @@ fn process_directory(dir: &Path, timestamp: &str) -> Result<(PathBuf, Consolidat
 
     println!("Consolidando {} archivos JSONL...", jsonl_files.len());
 
-    // Usamos fold/reduce para mejor paralelismo en lugar de Mutex compartido
-    // Ahora acumulamos RecordEntry en un Vec para mantener la consistencia
-    let (_, final_records, total_skipped, total_seen) = jsonl_files.par_iter().fold(
-        || (FxHashSet::<(String, u64)>::default(), Vec::<RecordEntry>::new(), 0usize, 0usize),
-        |(mut seen, mut acc_records, mut skipped, mut total), file_path| {
+    // Usamos fold/reduce para mejor paralelismo en lugar de Mutex compartido.
+    // Agrupamos por (key, hash del texto): dos líneas con la misma key y el mismo
+    // texto son duplicados; si además difieren en metadata (modelo/tokens), el grupo
+    // queda con más de una línea distinta y se trata como un conflicto a resolver.
+    type Group = FxHashMap<(String, u64), Vec<RecordEntry>>;
+    let (groups, total_skipped, total_seen) = jsonl_files.par_iter().fold(
+        || (Group::default(), 0usize, 0usize),
+        |(mut groups, mut skipped, mut total), file_path| {
             match File::open(file_path) {
                 Ok(file) => {
                     let reader = BufReader::new(file);
@@ -426,17 +469,20 @@ fn process_directory(dir: &Path, timestamp: &str) -> Result<(PathBuf, Consolidat
 
                             // Intentamos parsear la línea para extraer key y texto
                             if let Ok(pred) = serde_json::from_str::<PredictionLine>(trimmed) {
-                                let text = pred.extract_text().unwrap_or("");
+                                let text = pred.extract_text().unwrap_or("").to_string();
                                 let text_hash = fxhash::hash64(text.as_bytes());
                                 total += 1;
 
-                                if seen.insert((pred.key.clone(), text_hash)) {
-                                    acc_records.push(RecordEntry {
-                                        key: pred.key,
-                                        text_hash,
-                                        line: trimmed.to_string(),
-                                    });
-                                }
+                                groups.entry((pred.key.clone(), text_hash)).or_default().push(RecordEntry {
+                                    key: pred.key,
+                                    line: trimmed.to_string(),
+                                    text,
+                                    source_file: file_path.clone(),
+                                    model: pred.response.model_version,
+                                    prompt_tokens: pred.response.usage_metadata.prompt_token_count,
+                                    candidate_tokens: pred.response.usage_metadata.candidates_token_count,
+                                    total_tokens: pred.response.usage_metadata.total_token_count,
+                                });
                             } else {
                                 error!("No se pudo parsear registro en archivo {:?}: {}", file_path, trimmed.chars().take(50).collect::<String>());
                                 skipped += 1;
@@ -448,19 +494,17 @@ fn process_directory(dir: &Path, timestamp: &str) -> Result<(PathBuf, Consolidat
                     error!("No se pudo abrir archivo {:?}: {}", file_path, e);
                 }
             }
-            (seen, acc_records, skipped, total)
+            (groups, skipped, total)
         }
     ).reduce(
-        || (FxHashSet::<(String, u64)>::default(), Vec::<RecordEntry>::new(), 0usize, 0usize),
-        |(mut acc_seen, mut acc_records, mut acc_skipped, mut acc_total), (_seen, records, skipped, total)| {
-            for entry in records {
-                if acc_seen.insert((entry.key.clone(), entry.text_hash)) {
-                    acc_records.push(entry);
-                }
+        || (Group::default(), 0usize, 0usize),
+        |(mut acc_groups, mut acc_skipped, mut acc_total), (groups, skipped, total)| {
+            for (key, mut entries) in groups {
+                acc_groups.entry(key).or_default().append(&mut entries);
             }
             acc_skipped += skipped;
             acc_total += total;
-            (acc_seen, acc_records, acc_skipped, acc_total)
+            (acc_groups, acc_skipped, acc_total)
         }
     );
 
@@ -468,10 +512,32 @@ fn process_directory(dir: &Path, timestamp: &str) -> Result<(PathBuf, Consolidat
         error!("Total de líneas ignoradas por error de parseo: {}", total_skipped);
     }
 
-    let duplicates_removed = total_seen.saturating_sub(final_records.len());
+    // Dentro de cada grupo, colapsamos líneas crudas idénticas (duplicado exacto,
+    // sin conflicto) y dejamos solo variantes distintas por metadata.
+    let mut resolved_records: Vec<RecordEntry> = Vec::new();
+    let mut conflict_groups: Vec<Vec<RecordEntry>> = Vec::new();
+    for (_key, entries) in groups {
+        let mut distinct: Vec<RecordEntry> = Vec::new();
+        for entry in entries {
+            if !distinct.iter().any(|e: &RecordEntry| e.line == entry.line) {
+                distinct.push(entry);
+            }
+        }
+        if distinct.len() == 1 {
+            resolved_records.push(distinct.into_iter().next().unwrap());
+        } else {
+            conflict_groups.push(distinct);
+        }
+    }
+
+    if !conflict_groups.is_empty() {
+        resolve_conflicts(dir, decisions_path, &conflict_groups, &mut resolved_records)?;
+    }
+
+    let duplicates_removed = total_seen.saturating_sub(resolved_records.len());
 
     let mut records = Vec::new();
-    for entry in final_records {
+    for entry in resolved_records {
         records.push((entry.key, entry.line));
     }
 
@@ -505,4 +571,106 @@ fn process_directory(dir: &Path, timestamp: &str) -> Result<(PathBuf, Consolidat
             consolidated_file: Some(consolidated_path),
         },
     ))
+}
+
+/// Trunca y aplana un texto para usarlo como vista previa en `decisions.csv`.
+fn text_preview(text: &str) -> String {
+    let flattened: String = text.chars().map(|c| if c.is_whitespace() { ' ' } else { c }).collect();
+    let truncated: String = flattened.chars().take(100).collect();
+    if flattened.chars().count() > 100 {
+        format!("{}...", truncated)
+    } else {
+        truncated
+    }
+}
+
+/// Resuelve los grupos de candidatos con la misma key+texto pero distinta metadata.
+///
+/// Sin `decisions_path`: escribe `decisions.csv` con los diffs y detiene la ejecución
+/// para que el usuario indique, por candidato, "mantener" o "ignorar". Con
+/// `decisions_path`: aplica esas decisiones y agrega los candidatos conservados a
+/// `resolved_records`; si algún grupo queda sin ningún candidato marcado "mantener",
+/// detiene la ejecución señalando qué keys faltan por resolver.
+fn resolve_conflicts(
+    dir: &Path,
+    decisions_path: Option<&Path>,
+    conflict_groups: &[Vec<RecordEntry>],
+    resolved_records: &mut Vec<RecordEntry>,
+) -> Result<()> {
+    let Some(decisions_path) = decisions_path else {
+        let out_path = dir.join("decisions.csv");
+        let mut writer = csv::Writer::from_path(&out_path).with_context(|| {
+            format!("No se pudo crear el archivo de decisiones: {}", out_path.display())
+        })?;
+        for group in conflict_groups {
+            for entry in group {
+                writer
+                    .serialize(DecisionRow {
+                        key: entry.key.clone(),
+                        candidate_id: entry.candidate_id(),
+                        source_file: entry
+                            .source_file
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        model: entry.model.clone(),
+                        prompt_tokens: entry.prompt_tokens,
+                        candidate_tokens: entry.candidate_tokens,
+                        total_tokens: entry.total_tokens,
+                        text_preview: text_preview(&entry.text),
+                        decision: String::new(),
+                    })
+                    .with_context(|| format!("No se pudo escribir en {}", out_path.display()))?;
+            }
+        }
+        writer
+            .flush()
+            .with_context(|| format!("No se pudo finalizar {}", out_path.display()))?;
+
+        bail!(
+            "Se detectaron {} key(s) con candidatos en conflicto (mismo key+texto, distinta metadata).\n\
+             Complete la columna 'decision' en {} con 'mantener' (puede marcar más de un candidato por key) \
+             o 'ignorar'/vacío para descartar, y vuelva a ejecutar agregando --decisions \"{}\"",
+            conflict_groups.len(),
+            out_path.display(),
+            out_path.display()
+        );
+    };
+
+    let mut reader = csv::Reader::from_path(decisions_path).with_context(|| {
+        format!("No se pudo abrir el archivo de decisiones: {}", decisions_path.display())
+    })?;
+    let mut decisions: FxHashMap<String, String> = FxHashMap::default();
+    for row in reader.deserialize::<DecisionRow>() {
+        let row = row.with_context(|| {
+            format!("No se pudo leer una fila de {}", decisions_path.display())
+        })?;
+        decisions.insert(row.candidate_id, row.decision.trim().to_lowercase());
+    }
+
+    let mut unresolved_keys = Vec::new();
+    for group in conflict_groups {
+        let mut kept: Vec<RecordEntry> = group
+            .iter()
+            .filter(|entry| decisions.get(&entry.candidate_id()).map(|d| d.as_str()) == Some("mantener"))
+            .cloned()
+            .collect();
+        if kept.is_empty() {
+            unresolved_keys.push(group[0].key.clone());
+        } else {
+            resolved_records.append(&mut kept);
+        }
+    }
+
+    if !unresolved_keys.is_empty() {
+        bail!(
+            "El archivo de decisiones {} no tiene ningún candidato marcado 'mantener' para estas key(s): {}. \
+             Complételo y vuelva a intentar.",
+            decisions_path.display(),
+            unresolved_keys.join(", ")
+        );
+    }
+
+    Ok(())
 }
