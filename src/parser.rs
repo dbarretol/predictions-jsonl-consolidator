@@ -22,7 +22,7 @@ pub struct TokenDetail {
     pub token_count: u32,
 }
 
-#[derive(Deserialize, Debug, Serialize, Default, Clone)]
+#[derive(Deserialize, Debug, Serialize, Default, Clone, PartialEq)]
 pub enum TrafficType {
     #[default]
     #[serde(rename = "regular", alias = "REGULAR")]
@@ -78,5 +78,127 @@ impl PredictionLine {
             .first()?
             .text
             .as_deref()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn part(text: Option<&str>) -> Part {
+        Part { text: text.map(String::from) }
+    }
+
+    #[test]
+    fn extract_text_returns_text_when_present() {
+        let pred = PredictionLine {
+            key: "k".into(),
+            response: Response {
+                candidates: Some(vec![Candidate {
+                    content: Content { parts: Some(vec![part(Some("Hola"))]) },
+                }]),
+                model_version: "model-a".into(),
+                usage_metadata: serde_json::from_str("{}").unwrap(),
+            },
+        };
+        assert_eq!(pred.extract_text(), Some("Hola"));
+    }
+
+    #[test]
+    fn extract_text_none_when_no_candidates() {
+        let pred = PredictionLine {
+            key: "k".into(),
+            response: Response {
+                candidates: None,
+                model_version: "model-a".into(),
+                usage_metadata: serde_json::from_str("{}").unwrap(),
+            },
+        };
+        assert_eq!(pred.extract_text(), None);
+    }
+
+    #[test]
+    fn extract_text_none_when_candidates_empty() {
+        let pred = PredictionLine {
+            key: "k".into(),
+            response: Response {
+                candidates: Some(vec![]),
+                model_version: "model-a".into(),
+                usage_metadata: serde_json::from_str("{}").unwrap(),
+            },
+        };
+        assert_eq!(pred.extract_text(), None);
+    }
+
+    #[test]
+    fn extract_text_none_when_parts_missing() {
+        let pred = PredictionLine {
+            key: "k".into(),
+            response: Response {
+                candidates: Some(vec![Candidate { content: Content { parts: None } }]),
+                model_version: "model-a".into(),
+                usage_metadata: serde_json::from_str("{}").unwrap(),
+            },
+        };
+        assert_eq!(pred.extract_text(), None);
+    }
+
+    #[test]
+    fn extract_text_none_when_part_text_is_null() {
+        let pred = PredictionLine {
+            key: "k".into(),
+            response: Response {
+                candidates: Some(vec![Candidate {
+                    content: Content { parts: Some(vec![part(None)]) },
+                }]),
+                model_version: "model-a".into(),
+                usage_metadata: serde_json::from_str("{}").unwrap(),
+            },
+        };
+        assert_eq!(pred.extract_text(), None);
+    }
+
+    #[test]
+    fn traffic_type_default_is_regular() {
+        assert_eq!(TrafficType::default(), TrafficType::Regular);
+    }
+
+    #[test]
+    fn traffic_type_aliases_deserialize_correctly() {
+        let cases = [
+            (r#""regular""#, TrafficType::Regular),
+            (r#""REGULAR""#, TrafficType::Regular),
+            (r#""ON_DEMAND""#, TrafficType::OnDemand),
+            (r#""onDemand""#, TrafficType::OnDemand),
+            (r#""on_demand""#, TrafficType::OnDemand),
+            (r#""batch""#, TrafficType::Batch),
+            (r#""BATCH""#, TrafficType::Batch),
+            (r#""algo-nunca-visto""#, TrafficType::Unknown),
+        ];
+        for (json, expected) in cases {
+            let parsed: TrafficType = serde_json::from_str(json).unwrap();
+            assert_eq!(parsed, expected, "fallo deserializando {json}");
+        }
+    }
+
+    #[test]
+    fn usage_metadata_defaults_when_fields_absent() {
+        let metadata: UsageMetadata = serde_json::from_str("{}").unwrap();
+        assert_eq!(metadata.candidates_token_count, 0);
+        assert_eq!(metadata.prompt_token_count, 0);
+        assert_eq!(metadata.thoughts_token_count, 0);
+        assert_eq!(metadata.total_token_count, 0);
+        assert!(metadata.prompt_tokens_details.is_empty());
+        assert_eq!(metadata.traffic_type, TrafficType::Regular);
+    }
+
+    #[test]
+    fn usage_metadata_reads_partial_fields() {
+        let metadata: UsageMetadata =
+            serde_json::from_str(r#"{"promptTokenCount": 42, "trafficType": "batch"}"#).unwrap();
+        assert_eq!(metadata.prompt_token_count, 42);
+        assert_eq!(metadata.traffic_type, TrafficType::Batch);
+        // Los demás campos, ausentes en el JSON, deben tomar su default.
+        assert_eq!(metadata.total_token_count, 0);
     }
 }
