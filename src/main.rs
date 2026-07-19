@@ -58,10 +58,11 @@ struct TokenReport {
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Archivo JSONL de entrada (opcional si se usa --dir)
+    #[arg(conflicts_with = "dir")]
     input: Option<PathBuf>,
 
     /// Carpeta para buscar y consolidar archivos JSONL
-    #[arg(long, short)]
+    #[arg(long, short, conflicts_with = "input")]
     dir: Option<PathBuf>,
 
     /// Archivo de salida TXT (opcional, se genera con timestamp por defecto)
