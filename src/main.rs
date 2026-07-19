@@ -34,7 +34,7 @@ impl From<PredictionLine> for TokenReport {
         }
     }
 }
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Debug, Clone)]
 struct TokenReport {
     key: String,
     model: String,
@@ -157,12 +157,11 @@ struct Response {
 struct RecordEntry {
     key: String,
     line: String,
-    text: String,
+    /// Texto extraído de la respuesta; `None` si el registro no tiene texto (ver
+    /// `PredictionLine::extract_text`), para distinguir eso de un texto vacío real.
+    text: Option<String>,
+    report: TokenReport,
     source_file: PathBuf,
-    model: String,
-    prompt_tokens: u32,
-    candidate_tokens: u32,
-    total_tokens: u32,
 }
 
 impl RecordEntry {
@@ -354,30 +353,24 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
         extract_dir.join(format!("reporte_tokens_{}.csv", timestamp))
     });
 
-    // Los registros ya vienen deduplicados desde `deduplicate_files`; cada línea ya
-    // fue validada como JSON allí, así que este re-parseo no debería poder fallar.
+    // Los registros ya vienen parseados desde `deduplicate_files` (una sola pasada
+    // de JSON por línea): solo falta convertirlos a la forma que esperan los reportes.
     let mut processed_records = Vec::new();
     let mut records_without_text = 0usize;
 
     for entry in resolved_records {
-        let pred: PredictionLine = serde_json::from_str(&entry.line).with_context(|| {
-            format!("No se pudo reinterpretar un registro ya validado (key: {})", entry.key)
-        })?;
-
-        let text = match pred.extract_text() {
-            Some(text) => text.to_string(),
+        let text = match entry.text {
+            Some(text) => text,
             None => {
                 records_without_text += 1;
                 "...".to_string()
             }
         };
 
-        let report = TokenReport::from(pred);
-
         processed_records.push(ProcessedRecord {
             key: entry.key,
             text,
-            report,
+            report: entry.report,
         });
     }
 
@@ -486,21 +479,23 @@ fn deduplicate_files(
                                 continue;
                             }
 
-                            // Intentamos parsear la línea para extraer key y texto
+                            // Parseamos la línea una sola vez: el registro completo
+                            // (`TokenReport`) queda listo desde acá, para no tener que
+                            // volver a parsear el JSON al generar los reportes finales.
                             if let Ok(pred) = serde_json::from_str::<PredictionLine>(trimmed) {
-                                let text = pred.extract_text().unwrap_or("").to_string();
-                                let text_hash = fxhash::hash64(text.as_bytes());
+                                let text = pred.extract_text().map(|s| s.to_string());
+                                let text_hash = fxhash::hash64(text.as_deref().unwrap_or("").as_bytes());
                                 total += 1;
 
-                                groups.entry((pred.key.clone(), text_hash)).or_default().push(RecordEntry {
-                                    key: pred.key,
+                                let key = pred.key.clone();
+                                let report = TokenReport::from(pred);
+
+                                groups.entry((key.clone(), text_hash)).or_default().push(RecordEntry {
+                                    key,
                                     line: trimmed.to_string(),
                                     text,
+                                    report,
                                     source_file: file_path.clone(),
-                                    model: pred.response.model_version,
-                                    prompt_tokens: pred.response.usage_metadata.prompt_token_count,
-                                    candidate_tokens: pred.response.usage_metadata.candidates_token_count,
-                                    total_tokens: pred.response.usage_metadata.total_token_count,
                                 });
                             } else {
                                 error!("No se pudo parsear registro en archivo {:?}: {}", file_path, trimmed.chars().take(50).collect::<String>());
@@ -597,11 +592,11 @@ fn resolve_conflicts(
                             .and_then(|s| s.to_str())
                             .unwrap_or("")
                             .to_string(),
-                        model: entry.model.clone(),
-                        prompt_tokens: entry.prompt_tokens,
-                        candidate_tokens: entry.candidate_tokens,
-                        total_tokens: entry.total_tokens,
-                        text_preview: text_preview(&entry.text),
+                        model: entry.report.model.clone(),
+                        prompt_tokens: entry.report.prompt_tokens,
+                        candidate_tokens: entry.report.candidate_tokens,
+                        total_tokens: entry.report.total_tokens,
+                        text_preview: text_preview(entry.text.as_deref().unwrap_or("")),
                         decision: String::new(),
                     })
                     .with_context(|| format!("No se pudo escribir en {}", out_path.display()))?;
