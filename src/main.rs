@@ -33,7 +33,7 @@ impl From<PredictionLine> for TokenReport {
         }
     }
 }
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 struct TokenReport {
     key: String,
     model: String,
@@ -76,42 +76,42 @@ struct Args {
     out_csv: Option<PathBuf>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 struct Part {
     text: Option<String>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 struct Content {
     parts: Option<Vec<Part>>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 struct Candidate {
     content: Content,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 struct TokenDetail {
     modality: String,
     #[serde(rename = "tokenCount")]
     token_count: u32,
 }
 
-#[derive(Deserialize, Debug, Serialize, Default)]
+#[derive(Deserialize, Debug, Serialize, Default, Clone)]
 enum TrafficType {
     #[default]
-    #[serde(rename = "regular")]
+    #[serde(rename = "regular", alias = "REGULAR")]
     Regular,
-    #[serde(rename = "ON_DEMAND")]
+    #[serde(rename = "ON_DEMAND", alias = "onDemand", alias = "on_demand")]
     OnDemand,
-    #[serde(rename = "batch")]
+    #[serde(rename = "batch", alias = "BATCH")]
     Batch,
     #[serde(other)]
     Unknown,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 struct UsageMetadata {
     #[serde(rename = "candidatesTokenCount", default)]
     candidates_token_count: u32,
@@ -127,7 +127,7 @@ struct UsageMetadata {
     traffic_type: TrafficType,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 struct Response {
     candidates: Option<Vec<Candidate>>,
     #[serde(rename = "modelVersion")]
@@ -143,7 +143,7 @@ struct RecordEntry {
     line: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 struct PredictionLine {
     key: String,
     response: Response,
@@ -162,6 +162,13 @@ impl PredictionLine {
             .text
             .as_deref()
     }
+}
+
+#[derive(Clone)]
+struct ProcessedRecord {
+    key: String,
+    text: String,
+    report: TokenReport,
 }
 
 fn main() -> io::Result<()> {
@@ -187,6 +194,7 @@ fn main() -> io::Result<()> {
         fs::create_dir_all(&extract_dir)?;
     }
 
+    // Abrir archivos de salida para streaming (aunque ahora escribiremos al final)
     let out_txt_path = args.out_txt.unwrap_or_else(|| {
         extract_dir.join(format!("consolidado_{}.txt", timestamp))
     });
@@ -197,12 +205,8 @@ fn main() -> io::Result<()> {
         extract_dir.join(format!("reporte_tokens_{}.csv", timestamp))
     });
 
-    // Abrir archivos de salida para streaming
-    let mut txt_file = File::create(&out_txt_path)?;
-    let mut md_file = File::create(&out_md_path)?;
-    
-    // Lista para acumular reportes y ordenarlos antes de escribir el CSV
-    let mut token_reports = Vec::new();
+    // Lista para acumular todos los datos y ordenarlos antes de escribir cualquier archivo
+    let mut processed_records = Vec::new();
 
     let file = File::open(&input_path)?;
     let reader = BufReader::new(file);
@@ -217,14 +221,16 @@ fn main() -> io::Result<()> {
             Ok(pred) => {
                 let text = pred
                     .extract_text()
-                    .unwrap_or("...");
+                    .unwrap_or("...")
+                    .to_string();
                 
-                // Streaming a los archivos de salida
-                writeln!(txt_file, "{}\n", text)?;
-                writeln!(md_file, "## Clave: {}\n\n{}\n", pred.key, text)?;
+                let report = TokenReport::from(pred.clone());
                 
-                // Acumular reporte
-                token_reports.push(TokenReport::from(pred));
+                processed_records.push(ProcessedRecord {
+                    key: pred.key,
+                    text,
+                    report,
+                });
             }
             Err(e) => {
                 error!(
@@ -237,16 +243,26 @@ fn main() -> io::Result<()> {
         }
     }
     
-    // Ordenar reportes por clave usando orden natural
-    token_reports.sort_by(|a, b| natord::compare(&a.key, &b.key));
+    // Ordenar TODO globalmente por clave usando orden natural
+    processed_records.sort_by(|a, b| natord::compare(&a.key, &b.key));
 
-    // Escribir CSV ordenado
+    // Escribir archivos de salida ahora que todo está ordenado
+    let mut txt_file = File::create(&out_txt_path)?;
+    let mut md_file = File::create(&out_md_path)?;
     let mut csv_writer = csv::Writer::from_path(&out_csv_path)?;
-    for report in token_reports {
-        csv_writer.serialize(report)?;
+
+    for record in processed_records {
+        // Escribir TXT
+        writeln!(txt_file, "{}\n", record.text)?;
+        
+        // Escribir Markdown
+        writeln!(md_file, "## Clave: {}\n\n{}\n", record.key, record.text)?;
+        
+        // Escribir CSV
+        csv_writer.serialize(record.report)?;
     }
+
     csv_writer.flush()?;
-    
     info!("Archivos generados en: {:?}", extract_dir);
 
     Ok(())
