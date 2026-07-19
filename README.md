@@ -13,7 +13,7 @@ La herramienta extrae el contenido transcrito, genera documentos legibles y un r
   - Versión del modelo.
   - Tipo de tráfico.
   - Desglose de tokens (Texto, Imágenes, Pensamientos/Thoughts, Candidatos y Totales).
-- **Manejo de Errores**: Detecta y notifica entradas donde no se generó texto (ej. por límites de tokens).
+- **Manejo de Errores**: Detecta y notifica entradas donde no se generó texto (ej. por límites de tokens): se cuentan en el resumen final y cada `key` afectada queda registrada en el log de diagnóstico.
 
 ## Requisitos
 
@@ -45,6 +45,8 @@ cargo run -- --dir <RUTA_A_LA_CARPETA> [OPCIONES]
 - **Archivo individual**: Crea una carpeta llamada `jsonl_extract` en el mismo directorio donde se encuentra el archivo de entrada.
 - **Carpeta (--dir)**: Consolida todos los `.jsonl` encontrados en un archivo `consolidated_YYYYMMDD_HHMMSS.jsonl` en la carpeta indicada, y genera los reportes en una subcarpeta `jsonl_extract`.
 - **Nombres de archivo**: Todos los archivos generados (`.jsonl` consolidado, `.txt`, `.md`, `.csv`) incluyen un timestamp (`YYYYMMDD_HHMMSS`) para evitar sobreescrituras.
+- **Rutas de salida personalizadas** (`--out-txt`/`--out-md`/`--out-csv`): se crean los directorios padre que falten. `jsonl_extract` solo se crea si al menos una de las tres rutas de salida sigue usando su valor por defecto.
+- **Archivos `.jsonl` ilegibles** (en modo `--dir` o auto-modo): no detienen la consolidación de los demás archivos, pero el resultado puede quedar incompleto. Se cuentan y se listan en el resumen final, y el programa termina con código de salida distinto de cero para que no pase desapercibido.
 
 ### Ejemplo de uso:
 
