@@ -218,6 +218,21 @@ residual, teórico:
   parametrizar la función sobre un `Read` inyectable, una complejidad mayor que el propio
   fix para un caso ya etiquetado como hardening opcional.
 
+---
+
+## Re-auditoría 3 (2026-07-18) — cierre
+
+Verificado 7.1: el `match` sobre `ErrorKind` es correcto (`read_until` ya reintenta
+`Interrupted` internamente, así que el único error transitorio posible queda cubierto),
+el `break` corta solo el archivo afectado y este cae en `unreadable_files`, que ya
+garantiza exit 1 con aviso de resultado incompleto. La decisión de no testear el caso
+es razonable. `cargo clippy --all-targets` limpio, 22/22 tests. **Sin hallazgos nuevos:
+el plan queda cerrado** (abiertas solo las diferidas a propósito: 4.4, 5.5, 6.5).
+
+---
+
+## Orden sugerido de ejecución
+
 1. **Fase 1 completa** — bajo esfuerzo, es lo que el usuario percibe primero.
 2. **2.1 (decisión) → 2.2 → 2.3** — definen el pipeline definitivo.
 3. **3.1 + 3.2** — modularizar sobre el pipeline ya estable.
