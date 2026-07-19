@@ -139,6 +139,63 @@ Incorpora y ordena los pendientes ya identificados en `TODO.log`.
 
 ---
 
+## Fase 6 — Hallazgos de la re-auditoría (2026-07-18)
+
+Verificado en la re-auditoría: `cargo clippy --all-targets` sin advertencias, 17/17 tests
+pasan, modularización completa (8 módulos), README y `.gitignore` al día. Lo que sigue
+son los puntos residuales encontrados, ninguno crítico.
+
+- [x] **6.1 Líneas con UTF-8 inválido se descartan en silencio**
+  En `consolidator.rs` (`if let Ok(line) = line` dentro del loop de lectura), un error
+  de lectura/encoding se ignora sin loguear ni contar. Un archivo en Latin-1 perdería
+  líneas sin ninguna señal en el resumen. Contarlas como error de parseo o loguearlas.
+  Resuelto: ahora se loguea con `error!` y se cuenta como línea con error de parseo.
+
+- [x] **6.2 Test end-to-end del flujo `--decisions`**
+  Solo está testeada la detección del conflicto (se escribe `decisions.csv` y falla con
+  exit 1). Falta el camino de vuelta: completar el CSV con "mantener"/"ignorar", re-ejecutar
+  con `--decisions` y verificar qué candidatos quedan; y el caso de key sin resolver
+  (`UnresolvedDecisions`). Es la lógica nueva más compleja y está sin red de tests.
+  Resuelto: `decisions_workflow_keeps_marked_candidate_on_rerun` (round-trip completo) y
+  `decisions_without_any_kept_candidate_blocks_with_clear_error` (`UnresolvedDecisions`).
+
+- [x] **6.3 Cobertura de flags restantes**
+  Sin tests: `--recursive` (subcarpetas), `--no-keys` (TXT sin separadores) y el exit
+  code ≠ 0 cuando hay archivos ilegibles en modo `--dir`.
+  Resuelto: `recursive_flag_finds_files_in_subfolders`, `no_keys_flag_omits_separators_in_txt`
+  y `unreadable_file_in_dir_mode_reports_and_fails` (este último `#[cfg(windows)]`, simula
+  un archivo ilegible bloqueándolo con `share_mode(0)`).
+
+- [x] **6.4 `--quiet` no cumple lo que promete su ayuda**
+  El help dice "solo muestra errores", pero el resumen final y mensajes como
+  "Consolidando N archivos..." se imprimen igual con `-q` (los tests dependen de ello).
+  Corregir la descripción del flag (opción simple) o suprimir también el resumen con `-q`.
+  Decisión: se corrigió la descripción (opción simple, recomendada) — `--quiet` silencia
+  el diagnóstico de fondo (tracing) y la barra de progreso; el resumen final y los errores
+  siguen mostrándose porque van dirigidos al usuario, no son diagnóstico.
+
+- [ ] **6.5 Pausa de auto-modo también en terminales interactivas**
+  `pause_before_exit()` pide Enter siempre que no haya argumentos, aunque se haya
+  lanzado desde una terminal (no solo con doble click). Con stdin redirigido no cuelga
+  (EOF inmediato), así que es solo fricción menor. Se puede detectar consola propia con
+  `GetConsoleProcessList() == 1` en Windows para pausar únicamente con doble click.
+  Decisión: no implementado a propósito — agregaría una dependencia (winapi/windows-sys)
+  solo para eliminar una fricción menor (un Enter de más en terminal), sin caso de uso
+  urgente que lo justifique, en línea con 4.4/5.5.
+
+- [x] **6.6 Cosmético: semántica del resumen**
+  Los candidatos descartados vía "ignorar" en `decisions.csv` se cuentan como
+  "Duplicados eliminados" (son descartes por decisión, no duplicados). Y la barra de
+  progreso incrementa antes de validar la línea, así que cuenta también líneas vacías.
+  Resuelto: nuevo campo `discarded_by_decision` (separado de `duplicates_removed`) con su
+  propia línea "Descartados por decisión" en el resumen (solo si > 0); la barra de
+  progreso ahora incrementa después de descartar líneas en blanco.
+
+Nota: 4.4 (streaming), 5.5 (criterion) y 6.5 (detección de doble click) siguen abiertas
+a propósito — sin caso de uso que las justifique todavía.
+
+---
+
 ## Orden sugerido de ejecución
 
 1. **Fase 1 completa** — bajo esfuerzo, es lo que el usuario percibe primero.
