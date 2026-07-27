@@ -61,6 +61,9 @@ cargo run -- --dir ./data
 
 # Uso automático con un archivo:
 cargo run -- example/predictions.jsonl
+
+# uso recursivo
+cargo run -- -d "ruta a la carpeta" -r
 ```
 
 ## Parámetros y Opciones
