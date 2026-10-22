@@ -22,15 +22,14 @@ struct DecisionRow {
 }
 
 /// Identificador estable del candidato entre corridas, usado para enlazar
-/// `decisions.csv` con el candidato que describe. Se deriva de lo que se exporta
-/// (texto + `TokenReport`, que incluye la key), el mismo criterio que define un
-/// duplicado exacto: así no depende de cuál de varias líneas equivalentes quedó como
+/// `decisions.csv` con el candidato que describe. Se deriva de key + texto + `Usage`,
+/// el mismo criterio que define un duplicado exacto: así no depende de cuál de varias líneas equivalentes quedó como
 /// representante del grupo (eso varía con el orden de lectura) ni de campos que no se
 /// reportan, como `responseId`.
 fn candidate_id(entry: &RecordEntry) -> String {
     // JSON con orden de campos fijo: una representación canónica del candidato.
-    let canonical = serde_json::to_string(&(&entry.text, &entry.report))
-        .expect("texto y TokenReport siempre se pueden serializar");
+    let canonical = serde_json::to_string(&(&entry.key, &entry.text, &entry.usage))
+        .expect("key, texto y Usage siempre se pueden serializar");
     format!("{:016x}", fxhash::hash64(canonical.as_bytes()))
 }
 
@@ -88,10 +87,10 @@ impl PendingConflicts {
                         .and_then(|s| s.to_str())
                         .unwrap_or("")
                         .to_string(),
-                    model: entry.report.model.clone().unwrap_or_default(),
-                    prompt_tokens: entry.report.prompt_tokens,
-                    candidate_tokens: entry.report.candidate_tokens,
-                    total_tokens: entry.report.total_tokens,
+                    model: entry.usage.model.clone().unwrap_or_default(),
+                    prompt_tokens: entry.usage.prompt_tokens,
+                    candidate_tokens: entry.usage.candidate_tokens,
+                    total_tokens: entry.usage.total_tokens,
                     text_preview: text_preview(entry.text.as_deref().unwrap_or("")),
                     decision: String::new(),
                 })

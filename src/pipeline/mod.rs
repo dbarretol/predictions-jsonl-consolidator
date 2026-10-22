@@ -18,7 +18,7 @@ pub use decisions::PendingConflicts;
 pub use discovery::find_jsonl_files;
 
 use crate::errors::{AppError, Result};
-use crate::models::TokenReport;
+use crate::models::Usage;
 use std::path::{Path, PathBuf};
 
 /// Un registro leído junto con su origen: la línea cruda (para el
@@ -30,7 +30,7 @@ pub struct RecordEntry {
     /// Texto extraído de la respuesta; `None` si el registro no tiene texto (ver
     /// `models::Record`), para distinguir eso de un texto vacío real.
     pub text: Option<String>,
-    pub report: TokenReport,
+    pub usage: Usage,
     pub source_file: PathBuf,
 }
 
@@ -131,10 +131,9 @@ fn test_entry(key: &str, text: Option<&str>, model: &str, line: &str) -> RecordE
         key: key.to_string(),
         line: line.to_string(),
         text: text.map(String::from),
-        report: TokenReport {
-            key: key.to_string(),
+        usage: Usage {
             model: Some(model.to_string()),
-            ..TokenReport::default()
+            ..Usage::default()
         },
         source_file: PathBuf::from("test.jsonl"),
     }

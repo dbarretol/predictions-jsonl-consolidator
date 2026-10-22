@@ -8,14 +8,14 @@ pub(super) struct Collapsed {
     pub conflicts: Vec<Vec<RecordEntry>>,
 }
 
-/// Dos registros son duplicados exactos si coincide lo que se exporta: texto y
-/// `TokenReport` (que incluye la key). No se compara la línea cruda: re-ejecutar el
+/// Dos registros (de la misma key) son duplicados exactos si coinciden su texto y su
+/// metadata de uso (`Usage`). No se compara la línea cruda: re-ejecutar el
 /// mismo prompt cambia campos que no se reportan (`responseId`, `createTime`,
 /// `processed_time`, la URI de la imagen, el orden de `promptTokensDetails`) y eso no
 /// debe pedir una decisión al usuario, ya que en `decisions.csv` los candidatos se
 /// verían idénticos.
 fn is_exact_duplicate(a: &RecordEntry, b: &RecordEntry) -> bool {
-    a.text == b.text && a.report == b.report
+    a.text == b.text && a.usage == b.usage
 }
 
 /// Agrupa por (key, hash del texto): dos registros con la misma key y el mismo texto

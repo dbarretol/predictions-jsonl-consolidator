@@ -174,7 +174,7 @@ fn read_file(file_path: &Path, progress: &ProgressBar, acc: &mut ReadOutcome) {
     );
 }
 
-/// Parsea la línea una sola vez: el registro completo (`TokenReport`) queda listo desde
+/// Parsea la línea una sola vez: el registro completo (texto + `Usage`) queda listo desde
 /// acá, para no tener que volver a parsear el JSON al generar los reportes finales. El
 /// formato concreto solo lo conoce `input`.
 fn process_line(file_path: &Path, line_number: usize, line: &str, acc: &mut ReadOutcome) {
@@ -185,7 +185,7 @@ fn process_line(file_path: &Path, line_number: usize, line: &str, acc: &mut Read
                 key: record.key,
                 line: line.to_string(),
                 text: record.text,
-                report: record.report,
+                usage: record.usage,
                 source_file: file_path.to_path_buf(),
             });
         }
