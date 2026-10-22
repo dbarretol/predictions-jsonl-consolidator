@@ -6,7 +6,10 @@ use std::path::Path;
 
 pub fn write_md(path: &Path, records: &[ProcessedRecord]) -> Result<()> {
     let mut file = File::create(path).map_err(|source| {
-        AppError::io(format!("No se pudo crear el archivo Markdown: {}", path.display()), source)
+        AppError::io(
+            format!("No se pudo crear el archivo Markdown: {}", path.display()),
+            source,
+        )
     })?;
 
     for record in records {

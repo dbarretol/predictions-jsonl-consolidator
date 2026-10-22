@@ -6,7 +6,10 @@ use std::path::Path;
 
 pub fn write_txt(path: &Path, records: &[ProcessedRecord], include_keys: bool) -> Result<()> {
     let mut file = File::create(path).map_err(|source| {
-        AppError::io(format!("No se pudo crear el archivo TXT: {}", path.display()), source)
+        AppError::io(
+            format!("No se pudo crear el archivo TXT: {}", path.display()),
+            source,
+        )
     })?;
 
     for record in records {
