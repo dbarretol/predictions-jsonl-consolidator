@@ -301,10 +301,17 @@ terminaba con exit 0 y reportes vacíos, sin decir por qué.
   Resuelto: columna `Prompt Other Tokens` con el resto de modalidades.
   `candidatesTokensDetails` sigue sin exportarse a propósito: su total ya está en
   `Candidate Tokens` y la respuesta de este flujo es siempre texto.
-- [ ] **9.9 Determinismo de `candidate_id`**: `find_jsonl_files` no ordena y, desde 8.1,
+- [x] **9.9 Determinismo de `candidate_id`**: `find_jsonl_files` no ordena y, desde 8.1,
   el representante de un grupo equivalente es el primero visto; si el orden cambia entre
   corridas, los IDs de `decisions.csv` no coinciden. Ordenar archivos y derivar el ID de
   los campos exportados.
+  Resuelto: `find_jsonl_files` devuelve las rutas en orden natural, y `candidate_id` es
+  el hash del JSON canónico de (texto, `TokenReport`), con el mismo criterio que el
+  duplicado exacto. Test: `decisions_survive_reordered_input_files` (renombra un archivo
+  entre corridas para invertir el orden de lectura; falla con el ID anterior).
+  Nota: los `decisions.csv` generados antes de este cambio ya no coinciden y hay que
+  regenerarlos (son de uso inmediato, entre dos corridas seguidas). Agregar una columna
+  a `TokenReport` también cambia los IDs; se resolverá al separar `Usage` en 9.13.
 
 ### Estructura / mantenibilidad
 

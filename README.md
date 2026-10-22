@@ -124,6 +124,10 @@ La metadata (modelo, tokens, traffic type) no forma parte de la clave de dedupli
 
 Este flujo evita que la elección de "cuál sobrevive" dependa del orden no determinista de la
 consolidación paralela: siempre es una decisión explícita registrada en `decisions.csv`.
+El `candidate_id` se calcula a partir de lo que se exporta (texto + metadata del CSV), no de
+la línea cruda. Por eso las decisiones siguen siendo válidas en la re-ejecución aunque cambie
+el orden o el nombre de los archivos. Los archivos de una carpeta se leen siempre en orden
+natural de ruta.
 
 En el resumen final, los duplicados exactos colapsados automáticamente se cuentan en
 "Duplicados eliminados"; los candidatos descartados por decisión explícita (`ignorar`
