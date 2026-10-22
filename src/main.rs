@@ -9,11 +9,12 @@ use anyhow::{Context, Result, bail};
 use chrono::Local;
 use clap::Parser;
 use cli::Args;
+use errors::AppError;
 use models::ProcessedRecord;
-use pipeline::{ConsolidationSummary, deduplicate_files, find_jsonl_files};
+use pipeline::{ConsolidationSummary, Deduplication, deduplicate_files, find_jsonl_files};
 use std::fs::{self, File};
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tracing::error;
 
 fn main() -> Result<()> {
@@ -69,6 +70,20 @@ fn pause_before_exit() {
     }
 }
 
+/// Dónde escribir la plantilla `decisions.csv` cuando hay conflictos sin resolver.
+/// Es un archivo de trabajo que acompaña a los reportes: si se eligió otra ubicación
+/// para el CSV con `--out-csv`, va junto a él; si no, en la carpeta procesada, que es
+/// donde el usuario ya está mirando (y donde quedan los reportes, en `jsonl_extract/`).
+fn decisions_template_path(args: &Args, base_dir: &Path) -> PathBuf {
+    let dir = args
+        .out_csv
+        .as_deref()
+        .and_then(Path::parent)
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(base_dir);
+    dir.join("decisions.csv")
+}
+
 fn run(args: Args, timestamp: &str) -> Result<()> {
     let decisions_path = args.decisions.clone();
 
@@ -108,12 +123,23 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
         }
     }
 
-    let outcome = deduplicate_files(
-        &source_files,
-        &base_dir,
-        decisions_path.as_deref(),
-        !args.quiet,
-    )?;
+    let outcome = match deduplicate_files(&source_files, decisions_path.as_deref(), !args.quiet)? {
+        Deduplication::Resolved(outcome) => outcome,
+        Deduplication::PendingDecisions(pending) => {
+            let template_path = decisions_template_path(&args, &base_dir);
+            if let Some(parent) = template_path.parent() {
+                fs::create_dir_all(parent).with_context(|| {
+                    format!("No se pudo crear el directorio: {}", parent.display())
+                })?;
+            }
+            pending.write_template(&template_path)?;
+            return Err(AppError::ConflictsPendingResolution {
+                count: pending.len(),
+                decisions_path: template_path,
+            }
+            .into());
+        }
+    };
     let resolved_records = outcome.records;
     let total_seen = outcome.total_seen;
     let total_skipped = outcome.parse_errors;

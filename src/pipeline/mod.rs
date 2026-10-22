@@ -3,16 +3,18 @@
 //! 1. `discovery`: qué archivos `.jsonl` procesar (en orden natural).
 //! 2. `reader`: leerlos en paralelo y convertir cada línea vía `input::parse_line`.
 //! 3. `dedup`: colapsar duplicados exactos y separar los conflictos (lógica pura).
-//! 4. `decisions`: resolver los conflictos con `decisions.csv`.
+//! 4. `decisions`: aplicar un `decisions.csv` completado a los conflictos.
 //!
 //! Este módulo orquesta las etapas (`deduplicate_files`) y define los tipos que
-//! circulan entre ellas.
+//! circulan entre ellas. El pipeline solo lee: no escribe archivos (ni siquiera la
+//! plantilla de `decisions.csv`, que devuelve como `PendingConflicts`).
 
 mod decisions;
 mod dedup;
 mod discovery;
 mod reader;
 
+pub use decisions::PendingConflicts;
 pub use discovery::find_jsonl_files;
 
 use crate::errors::{AppError, Result};
@@ -32,7 +34,16 @@ pub struct RecordEntry {
     pub source_file: PathBuf,
 }
 
-/// Resultado de deduplicar uno o más archivos. Separa los descartes "automáticos"
+/// Resultado de `deduplicate_files`.
+pub enum Deduplication {
+    /// Todos los registros quedaron resueltos (sin conflictos, o conflictos resueltos
+    /// con `--decisions`).
+    Resolved(DeduplicationOutcome),
+    /// Hay conflictos y no se pasó `--decisions`: hace falta que el usuario decida.
+    PendingDecisions(PendingConflicts),
+}
+
+/// Registros resueltos y contadores para el resumen. Separa los descartes "automáticos"
 /// (duplicados exactos, sin ambigüedad) de los descartes explícitos vía
 /// `decisions.csv` (`ignorar`), que no son duplicados sino decisiones humanas.
 pub struct DeduplicationOutcome {
@@ -62,18 +73,17 @@ pub struct ConsolidationSummary {
     pub unreadable_files: Vec<PathBuf>,
 }
 
-/// Lee uno o más archivos JSONL, colapsa duplicados exactos y resuelve conflictos de
-/// metadata (ver `decisions::resolve_conflicts`). La misma función sirve para un único
-/// archivo o para varios, para que ambos modos de entrada compartan la lógica.
-/// Devuelve los registros resueltos junto con los contadores para el resumen, y los
-/// archivos que no se pudieron leer (el consolidado puede quedar incompleto si esa
-/// lista no está vacía).
+/// Lee uno o más archivos JSONL, colapsa duplicados exactos y, si hay conflictos de
+/// metadata, los resuelve con `decisions_path` (ver `decisions::apply_decisions`) o
+/// los devuelve como `Deduplication::PendingDecisions`. La misma función sirve para un
+/// único archivo o para varios, para que ambos modos de entrada compartan la lógica.
+/// Los archivos que no se pudieron leer quedan en `unreadable_files` (el consolidado
+/// puede quedar incompleto si esa lista no está vacía).
 pub fn deduplicate_files(
     files: &[PathBuf],
-    decisions_dir: &Path,
     decisions_path: Option<&Path>,
     show_progress: bool,
-) -> Result<DeduplicationOutcome> {
+) -> Result<Deduplication> {
     let read = reader::read_files(files, show_progress);
 
     // Si hubo líneas pero ninguna se pudo interpretar, lo más probable es que haya
@@ -93,20 +103,24 @@ pub fn deduplicate_files(
         conflicts,
     } = dedup::collapse_exact_duplicates(read.entries);
 
-    let discarded_by_decision = if conflicts.is_empty() {
-        0
-    } else {
-        decisions::resolve_conflicts(decisions_dir, decisions_path, conflicts, &mut resolved)?
+    let discarded_by_decision = match decisions_path {
+        _ if conflicts.is_empty() => 0,
+        Some(path) => decisions::apply_decisions(path, conflicts, &mut resolved)?,
+        None => {
+            return Ok(Deduplication::PendingDecisions(PendingConflicts::new(
+                conflicts,
+            )));
+        }
     };
 
-    Ok(DeduplicationOutcome {
+    Ok(Deduplication::Resolved(DeduplicationOutcome {
         records: resolved,
         total_seen: read.total_seen,
         parse_errors: read.parse_errors,
         failed_predictions: read.failed_predictions,
         unreadable_files: read.unreadable_files,
         discarded_by_decision,
-    })
+    }))
 }
 
 /// Construye un `RecordEntry` mínimo para los tests unitarios de las etapas.

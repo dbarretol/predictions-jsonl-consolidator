@@ -48,32 +48,82 @@ fn text_preview(text: &str) -> String {
     }
 }
 
-/// Resuelve los grupos de candidatos con la misma key+texto pero distinta metadata.
+/// Grupos en conflicto (misma key+texto, distinta metadata) que esperan una decisión
+/// explícita en `decisions.csv`. No escribe nada por sí mismo: quien llama decide
+/// dónde guardar la plantilla con `write_template`.
+pub struct PendingConflicts {
+    groups: Vec<Vec<RecordEntry>>,
+}
+
+impl PendingConflicts {
+    pub(super) fn new(groups: Vec<Vec<RecordEntry>>) -> Self {
+        PendingConflicts { groups }
+    }
+
+    /// Cantidad de keys en conflicto.
+    pub fn len(&self) -> usize {
+        self.groups.len()
+    }
+
+    /// Escribe `decisions.csv` en `out_path`: una fila por candidato con una columna
+    /// `decision` vacía, para que el usuario indique "mantener" o "ignorar".
+    pub fn write_template(&self, out_path: &Path) -> Result<()> {
+        let mut writer = csv::Writer::from_path(out_path).map_err(|source| {
+            AppError::csv(
+                format!(
+                    "No se pudo crear el archivo de decisiones: {}",
+                    out_path.display()
+                ),
+                source,
+            )
+        })?;
+        for entry in self.groups.iter().flatten() {
+            writer
+                .serialize(DecisionRow {
+                    key: entry.key.clone(),
+                    candidate_id: candidate_id(entry),
+                    source_file: entry
+                        .source_file
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    model: entry.report.model.clone().unwrap_or_default(),
+                    prompt_tokens: entry.report.prompt_tokens,
+                    candidate_tokens: entry.report.candidate_tokens,
+                    total_tokens: entry.report.total_tokens,
+                    text_preview: text_preview(entry.text.as_deref().unwrap_or("")),
+                    decision: String::new(),
+                })
+                .map_err(|source| {
+                    AppError::csv(
+                        format!("No se pudo escribir en {}", out_path.display()),
+                        source,
+                    )
+                })?;
+        }
+        writer.flush().map_err(|source| {
+            AppError::io(
+                format!("No se pudo finalizar {}", out_path.display()),
+                source,
+            )
+        })
+    }
+}
+
+/// Aplica un `decisions.csv` ya completado a los grupos en conflicto: agrega los
+/// candidatos marcados "mantener" a `resolved_records` y devuelve cuántos se
+/// descartaron. Si algún grupo queda sin ningún candidato marcado "mantener", detiene
+/// la ejecución señalando qué keys faltan por resolver.
 ///
-/// Sin `decisions_path`: escribe `decisions.csv` con los diffs y detiene la ejecución
-/// para que el usuario indique, por candidato, "mantener" o "ignorar". Con
-/// `decisions_path`: aplica esas decisiones y agrega los candidatos conservados a
-/// `resolved_records`; si algún grupo queda sin ningún candidato marcado "mantener",
-/// detiene la ejecución señalando qué keys faltan por resolver.
-///
-/// Toma `conflict_groups` por valor (no por referencia) porque la rama de resolución
-/// mueve los `RecordEntry` conservados directamente a `resolved_records`, sin
-/// clonarlos: la única llamadora (`deduplicate_files`) no los necesita después.
-pub(super) fn resolve_conflicts(
-    dir: &Path,
-    decisions_path: Option<&Path>,
+/// Toma `conflict_groups` por valor (no por referencia) para mover los `RecordEntry`
+/// conservados directamente a `resolved_records`, sin clonarlos: la única llamadora
+/// (`deduplicate_files`) no los necesita después.
+pub(super) fn apply_decisions(
+    decisions_path: &Path,
     conflict_groups: Vec<Vec<RecordEntry>>,
     resolved_records: &mut Vec<RecordEntry>,
 ) -> Result<usize> {
-    let Some(decisions_path) = decisions_path else {
-        let out_path = dir.join("decisions.csv");
-        write_decisions_template(&out_path, &conflict_groups)?;
-        return Err(AppError::ConflictsPendingResolution {
-            count: conflict_groups.len(),
-            decisions_path: out_path,
-        });
-    };
-
     let decisions = read_decisions(decisions_path)?;
 
     let mut unresolved_keys = Vec::new();
@@ -105,49 +155,6 @@ pub(super) fn resolve_conflicts(
     }
 
     Ok(discarded_by_decision)
-}
-
-fn write_decisions_template(out_path: &Path, conflict_groups: &[Vec<RecordEntry>]) -> Result<()> {
-    let mut writer = csv::Writer::from_path(out_path).map_err(|source| {
-        AppError::csv(
-            format!(
-                "No se pudo crear el archivo de decisiones: {}",
-                out_path.display()
-            ),
-            source,
-        )
-    })?;
-    for entry in conflict_groups.iter().flatten() {
-        writer
-            .serialize(DecisionRow {
-                key: entry.key.clone(),
-                candidate_id: candidate_id(entry),
-                source_file: entry
-                    .source_file
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("")
-                    .to_string(),
-                model: entry.report.model.clone().unwrap_or_default(),
-                prompt_tokens: entry.report.prompt_tokens,
-                candidate_tokens: entry.report.candidate_tokens,
-                total_tokens: entry.report.total_tokens,
-                text_preview: text_preview(entry.text.as_deref().unwrap_or("")),
-                decision: String::new(),
-            })
-            .map_err(|source| {
-                AppError::csv(
-                    format!("No se pudo escribir en {}", out_path.display()),
-                    source,
-                )
-            })?;
-    }
-    writer.flush().map_err(|source| {
-        AppError::io(
-            format!("No se pudo finalizar {}", out_path.display()),
-            source,
-        )
-    })
 }
 
 /// Lee `decisions.csv` completado: `candidate_id` → decisión normalizada.
