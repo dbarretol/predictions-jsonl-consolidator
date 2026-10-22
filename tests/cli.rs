@@ -304,6 +304,44 @@ fn metadata_conflict_blocks_and_writes_decisions_csv() {
     assert_eq!(rows.len(), 2, "debe listar los dos candidatos en conflicto");
 }
 
+#[test]
+fn decisions_csv_goes_next_to_custom_out_csv() {
+    let input_dir = tempdir().unwrap();
+    let out_dir = tempdir().unwrap();
+    let input = input_dir.path().join("preds.jsonl");
+    let content = [
+        line_full("item-1", "Hola mundo", "model-a", 10),
+        line_full("item-1", "Hola mundo", "model-b", 20),
+    ]
+    .join(
+        "
+",
+    );
+    fs::write(&input, content).unwrap();
+    // La carpeta de salida todavía no existe: debe crearse para la plantilla.
+    let out_csv = out_dir.path().join("reportes").join("tokens.csv");
+
+    cmd()
+        .arg(&input)
+        .arg("--quiet")
+        .arg("--out-csv")
+        .arg(&out_csv)
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("candidatos en conflicto"));
+
+    assert!(
+        out_dir
+            .path()
+            .join("reportes")
+            .join("decisions.csv")
+            .exists()
+    );
+    // La carpeta de entrada no se toca.
+    assert!(!input_dir.path().join("decisions.csv").exists());
+}
+
 /// Marca "mantener" en `decisions.csv` para el candidato cuyo `model` coincide con
 /// `keep_model`, dejando el resto sin marcar (se descartan como "ignorar").
 fn mark_decision(decisions_path: &Path, keep_model: &str) {
