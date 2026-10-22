@@ -376,6 +376,55 @@ fn decisions_workflow_keeps_marked_candidate_on_rerun() {
 }
 
 #[test]
+fn decisions_survive_reordered_input_files() {
+    // Conflicto cuyo candidato "model-a" aparece dos veces de forma equivalente
+    // (distinto `responseId`) en archivos distintos: cuál de las dos líneas representa
+    // al candidato depende del orden de lectura, y su ID no debe depender de eso.
+    let dir = tempdir().unwrap();
+    let model_a = |response_id| line_rerun("item-1", "Hola mundo", response_id, true);
+    fs::write(
+        dir.path().join("a.jsonl"),
+        format!("{}\n", model_a("resp-1")),
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("b.jsonl"),
+        format!("{}\n", line_full("item-1", "Hola mundo", "model-b", 20)),
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("c.jsonl"),
+        format!("{}\n", model_a("resp-2")),
+    )
+    .unwrap();
+
+    cmd()
+        .arg("--dir")
+        .arg(dir.path())
+        .arg("--quiet")
+        .assert()
+        .failure()
+        .code(1);
+
+    let decisions_path = dir.path().join("decisions.csv");
+    mark_decision(&decisions_path, "model-a");
+
+    // Invierte el orden de lectura: ahora la línea con `resp-2` se lee primero.
+    fs::rename(dir.path().join("a.jsonl"), dir.path().join("z.jsonl")).unwrap();
+
+    cmd()
+        .arg("--dir")
+        .arg(dir.path())
+        .arg("--quiet")
+        .arg("--decisions")
+        .arg(&decisions_path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Descartados por decisión:   1"))
+        .stdout(predicate::str::contains("Duplicados eliminados:      1"));
+}
+
+#[test]
 fn decisions_without_any_kept_candidate_blocks_with_clear_error() {
     let dir = tempdir().unwrap();
     let input = dir.path().join("preds.jsonl");
