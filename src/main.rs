@@ -1,16 +1,16 @@
 mod cli;
-mod consolidator;
 mod errors;
 mod exporters;
 mod input;
 mod models;
+mod pipeline;
 
 use anyhow::{Context, Result, bail};
 use chrono::Local;
 use clap::Parser;
 use cli::Args;
-use consolidator::{ConsolidationSummary, deduplicate_files, find_jsonl_files};
 use models::ProcessedRecord;
+use pipeline::{ConsolidationSummary, deduplicate_files, find_jsonl_files};
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::Path;

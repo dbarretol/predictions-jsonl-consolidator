@@ -11,11 +11,11 @@ pub struct Record {
 }
 
 /// Metadata de uso de una predicción. Es a la vez la fila del CSV de tokens y parte
-/// del criterio de duplicado exacto (ver `consolidator::deduplicate_files`).
+/// del criterio de duplicado exacto (ver `pipeline::dedup`).
 ///
 /// Los campos de texto son `Option`: si el formato de origen deja de traerlos, la
 /// celda queda vacía en vez de descartarse la línea.
-#[derive(Serialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Debug, Clone, Default, PartialEq)]
 pub struct TokenReport {
     pub key: String,
     pub model: Option<String>,
