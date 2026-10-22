@@ -143,7 +143,9 @@ cargo test
 Incluye tests unitarios del adaptador de formato (`src/input/vertex_batch.rs`: extracción
 de texto y partes de razonamiento, campos opcionales, `status` de predicción fallida,
 `finishReason`, `trafficType` literal, suma de tokens por modalidad, y que todos los
-fixtures del repo se parseen sin errores) y tests de integración
+fixtures del repo se parseen sin errores), tests unitarios del pipeline (`src/pipeline/`:
+orden y filtrado de archivos, colapso de duplicados y conflictos, estabilidad de
+`candidate_id`, vista previa de `decisions.csv`) y tests de integración
 (`tests/cli.rs`) que ejecutan el binario real sobre archivos temporales: consolidación
 multi-archivo, deduplicación, orden natural, líneas corruptas, registros sin texto,
 conflictos de metadata, validez del CSV generado, el flujo completo de `--decisions`
@@ -176,10 +178,21 @@ El formato del JSONL solo se conoce en `src/input/`:
 - `input/vertex_batch.rs`: structs de serde del formato batch de Vertex AI / Gemini y su
   conversión a `Record`.
 
-El resto del programa (deduplicación en `consolidator.rs`, exportadores en `exporters/`)
-trabaja con `models::Record` y `models::TokenReport`. Si el formato cambia, el ajuste se
-hace en el adaptador. Para soportar un formato distinto, se agrega otro adaptador junto a
-`vertex_batch.rs` y se despacha hacia él desde `parse_line`.
+El resto del programa trabaja con `models::Record` y `models::TokenReport`. Si el formato
+cambia, el ajuste se hace en el adaptador. Para soportar un formato distinto, se agrega otro
+adaptador junto a `vertex_batch.rs` y se despacha hacia él desde `parse_line`.
+
+La consolidación vive en `src/pipeline/`, una etapa por archivo:
+
+- `discovery.rs`: qué archivos `.jsonl` procesar, en orden natural.
+- `reader.rs`: lectura paralela; convierte cada línea con `input::parse_line` y cuenta
+  errores de parseo, predicciones fallidas y archivos ilegibles.
+- `dedup.rs`: colapsa duplicados exactos y separa los conflictos. Es lógica pura, sin E/S.
+- `decisions.rs`: escribe y aplica `decisions.csv`.
+- `mod.rs`: orquesta las etapas (`deduplicate_files`).
+
+Los exportadores (`src/exporters/`) generan el TXT, el MD y el CSV a partir de los
+registros resueltos.
 
 ---
 Proyecto desarrollado como parte de un experimento en Rust.

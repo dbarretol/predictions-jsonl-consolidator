@@ -315,8 +315,17 @@ terminaba con exit 0 y reportes vacíos, sin decir por qué.
 
 ### Estructura / mantenibilidad
 
-- [ ] **9.10 Dividir `consolidator.rs`** en `discovery`, `reader`, `dedup` (puro, con tests
+- [x] **9.10 Dividir `consolidator.rs`** en `discovery`, `reader`, `dedup` (puro, con tests
   unitarios) y `decisions`.
+  Resuelto: `consolidator.rs` (≈470 líneas) se reemplazó por `src/pipeline/` (`mod.rs`
+  orquesta y define `RecordEntry`, `DeduplicationOutcome` y `ConsolidationSummary`). La
+  lectura ya no agrupa: devuelve los registros en orden de lectura (el `reduce` de rayon
+  preserva el orden de `files`) y la agrupación pasó a `dedup::collapse_exact_duplicates`,
+  que es pura. El cuerpo del `fold` se dividió en `read_file` y `process_line`, y la
+  escritura y lectura de `decisions.csv` en `write_decisions_template` y `read_decisions`.
+  La API pública (`deduplicate_files`, `find_jsonl_files`) no cambió. Se agregaron 11 tests
+  unitarios (discovery 4, dedup 4, decisions 3); la salida TXT/MD/CSV de los fixtures es
+  idéntica byte a byte a la del paso anterior.
 - [ ] **9.11 Sin efectos secundarios en la deduplicación**: devolver los conflictos y que
   la orquestación decida dónde escribir `decisions.csv`.
 - [ ] **9.12 Partir `main::run`** (`resolve_inputs`, `write_consolidated`,
