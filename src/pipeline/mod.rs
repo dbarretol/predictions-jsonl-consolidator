@@ -43,33 +43,26 @@ pub enum Deduplication {
     PendingDecisions(PendingConflicts),
 }
 
-/// Registros resueltos y contadores para el resumen. Separa los descartes "automáticos"
-/// (duplicados exactos, sin ambigüedad) de los descartes explícitos vía
-/// `decisions.csv` (`ignorar`), que no son duplicados sino decisiones humanas.
+/// Registros resueltos, listos para exportar, y los contadores para el resumen.
 pub struct DeduplicationOutcome {
     pub records: Vec<RecordEntry>,
-    pub total_seen: usize,
+    pub stats: DeduplicationStats,
+}
+
+/// Contadores de la deduplicación. Separa los descartes "automáticos" (duplicados
+/// exactos, sin ambigüedad) de los descartes explícitos vía `decisions.csv`
+/// (`ignorar`), que no son duplicados sino decisiones humanas.
+#[derive(Debug, Default)]
+pub struct DeduplicationStats {
     pub parse_errors: usize,
     /// Líneas válidas en las que la API informó que la predicción falló (`status`).
     pub failed_predictions: usize,
-    pub unreadable_files: Vec<PathBuf>,
-    pub discarded_by_decision: usize,
-}
-
-#[derive(Default)]
-pub struct ConsolidationSummary {
-    pub files_read: usize,
     /// Duplicados exactos colapsados automáticamente (misma key+texto+metadata).
     pub duplicates_removed: usize,
     /// Candidatos descartados por decisión explícita en `decisions.csv` (`ignorar`).
     /// No son duplicados: son variantes distintas que el usuario eligió no conservar.
     pub discarded_by_decision: usize,
-    pub parse_errors: usize,
-    /// Predicciones que la API marcó como fallidas: no traen respuesta que exportar.
-    pub failed_predictions: usize,
-    /// Ruta del `consolidated_*.jsonl` generado, si se combinaron varios archivos.
-    pub consolidated_file: Option<PathBuf>,
-    /// Archivos `.jsonl` que no se pudieron abrir (el consolidado puede quedar incompleto).
+    /// Archivos `.jsonl` que no se pudieron leer (el consolidado puede quedar incompleto).
     pub unreadable_files: Vec<PathBuf>,
 }
 
@@ -113,13 +106,21 @@ pub fn deduplicate_files(
         }
     };
 
+    // Lo que no sobrevivió ni se descartó por decisión explícita es un duplicado exacto.
+    let duplicates_removed = read
+        .total_seen
+        .saturating_sub(resolved.len())
+        .saturating_sub(discarded_by_decision);
+
     Ok(Deduplication::Resolved(DeduplicationOutcome {
         records: resolved,
-        total_seen: read.total_seen,
-        parse_errors: read.parse_errors,
-        failed_predictions: read.failed_predictions,
-        unreadable_files: read.unreadable_files,
-        discarded_by_decision,
+        stats: DeduplicationStats {
+            parse_errors: read.parse_errors,
+            failed_predictions: read.failed_predictions,
+            duplicates_removed,
+            discarded_by_decision,
+            unreadable_files: read.unreadable_files,
+        },
     }))
 }
 
