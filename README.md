@@ -101,8 +101,11 @@ deduplicación. Dos líneas se consideran **duplicadas** si tienen la misma `key
 el mismo texto extraído de la respuesta (`response.candidates[0].content.parts[0].text`).
 La metadata (modelo, tokens, traffic type) no forma parte de la clave de deduplicación.
 
-- Si dos líneas duplicadas son además idénticas byte a byte (misma metadata), se colapsan
-  automáticamente sin intervención: no hay ambigüedad sobre qué conservar.
+- Si dos líneas duplicadas tienen además la misma metadata reportada (modelo, traffic type
+  y todos los conteos de tokens del CSV), se colapsan automáticamente sin intervención: no
+  hay ambigüedad sobre qué conservar. Los campos que no se reportan (`responseId`,
+  `createTime`, `processed_time`, URIs de la solicitud, orden de `promptTokensDetails`) no
+  cuentan, así que re-ejecutar el mismo prompt no genera un conflicto.
 - Si dos líneas comparten `key` y texto pero **difieren en metadata** (ej. mismo texto
   generado por dos modelos distintos, o con distinto conteo de tokens), es un **conflicto**:
   la herramienta no elige por vos. En su lugar:
