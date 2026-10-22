@@ -264,22 +264,43 @@ terminaba con exit 0 y reportes vacíos, sin decir por qué.
   lectura paralela usa ahora un `ReadAccumulator` con nombre en vez de una tupla.
   Tests: `format_change_fails_with_reason_instead_of_empty_reports` y el número de línea
   en `corrupt_line_is_counted_and_skipped_without_failing`.
-- [ ] **9.2 Una sola frontera con el formato**
+- [x] **9.2 Una sola frontera con el formato**
   Hoy el formato se conoce en `parser.rs`, `models.rs` (`From<PredictionLine>`, strings
   `"IMAGE"`/`"TEXT"`) y `consolidator.rs`. Crear `input::parse_line(&str) -> Result<Record,
   ParseError>` y un adaptador `input/vertex_batch.rs`; el resto trabaja con `Record`.
-- [ ] **9.3 Campos obligatorios no esenciales**: solo `key` es imprescindible;
+  Resuelto: `parser.rs` se reemplazó por `src/input/` (`mod.rs` con `parse_line`,
+  `LineOutcome` y `ParseError`; `vertex_batch.rs` con los structs serde, ahora privados,
+  y la conversión). `models.rs` ya no depende del formato (`Record` + `TokenReport`) y
+  `consolidator.rs` solo llama a `input::parse_line`. Los tests unitarios del adaptador
+  parsean desde strings JSON (adelanto de 9.15) e incluyen un test que exige 0 errores
+  sobre todos los fixtures del repo.
+- [x] **9.3 Campos obligatorios no esenciales**: solo `key` es imprescindible;
   `modelVersion`/`usageMetadata` deberían ser opcionales y reportarse como desconocidos.
-- [ ] **9.4 `status` de Vertex batch**: las predicciones fallidas (con `status` y sin
+  Resuelto: `model`/`traffic_type` son `Option` (celda vacía en el CSV), `usageMetadata`
+  y cada conteo tienen valor por defecto (Vertex omite los ceros), y `candidates`/`parts`
+  aceptan `null`.
+- [x] **9.4 `status` de Vertex batch**: las predicciones fallidas (con `status` y sin
   `response`) se cuentan hoy como error de parseo; contarlas aparte con su mensaje.
-- [ ] **9.5 `extract_text` solo lee `parts[0]`**: concatenar las partes de texto que no
+  Resuelto: `LineOutcome::FailedPrediction`; se registra con key, línea y mensaje y se
+  cuenta en "Predicciones fallidas". `status` vacío, `null` u objeto vacío es éxito; una
+  línea sin `response` y sin `status` de error sigue siendo error de parseo.
+- [x] **9.5 `extract_text` solo lee `parts[0]`**: concatenar las partes de texto que no
   sean `thought: true` (las partes ya traen `thoughtSignature`).
-- [ ] **9.6 `finishReason` no se captura**: los registros `MAX_TOKENS` salen como "sin
+  Resuelto. Verificado que la salida TXT/MD de los fixtures reales es idéntica byte a
+  byte a la anterior (todas sus respuestas tienen una sola parte).
+- [x] **9.6 `finishReason` no se captura**: los registros `MAX_TOKENS` salen como "sin
   texto" sin explicación; agregarlo al CSV.
-- [ ] **9.7 `TrafficType` con pérdida**: `#[serde(other)] Unknown` descarta el valor
+  Resuelto: columna `Finish Reason` al final del CSV y campo `finish_reason` en el log
+  de "Registro sin texto extraído".
+- [x] **9.7 `TrafficType` con pérdida**: `#[serde(other)] Unknown` descarta el valor
   (`PROVISIONED_THROUGHPUT` → `Unknown`); usar `String` o `Other(String)`.
-- [ ] **9.8 Modalidades descartadas en silencio**: solo se suman `IMAGE`/`TEXT`;
+  Resuelto: se eliminó el enum; el valor se copia literal. Cambio visible: una línea sin
+  `trafficType` deja la celda vacía en vez de `regular` (los fixtures traen `ON_DEMAND`).
+- [x] **9.8 Modalidades descartadas en silencio**: solo se suman `IMAGE`/`TEXT`;
   `candidatesTokensDetails` se ignora.
+  Resuelto: columna `Prompt Other Tokens` con el resto de modalidades.
+  `candidatesTokensDetails` sigue sin exportarse a propósito: su total ya está en
+  `Candidate Tokens` y la respuesta de este flujo es siempre texto.
 - [ ] **9.9 Determinismo de `candidate_id`**: `find_jsonl_files` no ordena y, desde 8.1,
   el representante de un grupo equivalente es el primero visto; si el orden cambia entre
   corridas, los IDs de `decisions.csv` no coinciden. Ordenar archivos y derivar el ID de

@@ -12,8 +12,11 @@ La herramienta extrae el contenido transcrito, genera documentos legibles y un r
 - **Reporte de Tokens (CSV)**: Genera un reporte detallado que incluye:
   - Versión del modelo.
   - Tipo de tráfico.
-  - Desglose de tokens (Texto, Imágenes, Pensamientos/Thoughts, Candidatos y Totales).
-- **Manejo de Errores**: Detecta y notifica entradas donde no se generó texto (ej. por límites de tokens): se cuentan en el resumen final y cada `key` afectada queda registrada en el log de diagnóstico.
+  - Desglose de tokens (Texto, Imágenes, otras modalidades, Pensamientos/Thoughts, Candidatos y Totales).
+  - Motivo de fin de la respuesta (`Finish Reason`, ej. `STOP` o `MAX_TOKENS`).
+- **Manejo de Errores**: Detecta y notifica entradas donde no se generó texto (ej. por límites de tokens): se cuentan en el resumen final y cada `key` afectada queda registrada en el log de diagnóstico junto con su `finish_reason`.
+- **Predicciones fallidas**: las líneas en las que la API informa un error en `status` (sin `response`) se cuentan aparte en "Predicciones fallidas" y su mensaje queda en el log; no se confunden con líneas malformadas.
+- **Tolerancia a cambios de formato**: solo `key` es imprescindible. Si faltan `modelVersion`, `usageMetadata` u otros campos de metadata, la línea se conserva y esas celdas quedan vacías o en cero. Las partes de razonamiento (`thought: true`) no se exportan como texto, y si la respuesta trae varias partes de texto se concatenan. Todo el conocimiento del formato vive en `src/input/` (ver [Arquitectura](#arquitectura)).
 
 ## Requisitos
 
@@ -133,8 +136,10 @@ hubo al menos uno), ya que no son duplicados sino variantes que el usuario eligi
 cargo test
 ```
 
-Incluye tests unitarios de parsing (`src/parser.rs`: `extract_text`, alias de
-`TrafficType`, valores por defecto de `UsageMetadata`) y tests de integración
+Incluye tests unitarios del adaptador de formato (`src/input/vertex_batch.rs`: extracción
+de texto y partes de razonamiento, campos opcionales, `status` de predicción fallida,
+`finishReason`, `trafficType` literal, suma de tokens por modalidad, y que todos los
+fixtures del repo se parseen sin errores) y tests de integración
 (`tests/cli.rs`) que ejecutan el binario real sobre archivos temporales: consolidación
 multi-archivo, deduplicación, orden natural, líneas corruptas, registros sin texto,
 conflictos de metadata, validez del CSV generado, el flujo completo de `--decisions`
@@ -147,14 +152,30 @@ en Windows).
 El archivo CSV generado contiene las siguientes columnas:
 
 1. `key`: Identificador único de la entrada.
-2. `model`: Versión del modelo utilizado.
-3. `Traffic Type`: Tipo de tráfico (ej. ON_DEMAND).
+2. `model`: Versión del modelo utilizado (vacío si la línea no lo trae).
+3. `Traffic Type`: Tipo de tráfico tal cual lo informa la API (ej. `ON_DEMAND`, `PROVISIONED_THROUGHPUT`).
 4. `Prompt Image Tokens`: Cantidad de tokens consumidos por imágenes en el prompt.
 5. `Prompt Text Tokens`: Cantidad de tokens consumidos por texto en el prompt.
-6. `Prompt Tokens`: Total de tokens en el prompt.
-7. `Candidate Tokens`: Tokens generados en la respuesta.
-8. `Thoughts Tokens`: Tokens de razonamiento interno (si aplica).
-9. `Total Tokens`: Suma total de todos los tokens procesados.
+6. `Prompt Other Tokens`: Tokens del prompt en otras modalidades (audio, video, documento...).
+7. `Prompt Tokens`: Total de tokens en el prompt.
+8. `Candidate Tokens`: Tokens generados en la respuesta.
+9. `Thoughts Tokens`: Tokens de razonamiento interno (si aplica).
+10. `Total Tokens`: Suma total de todos los tokens procesados.
+11. `Finish Reason`: Motivo de fin de la respuesta (ej. `STOP`, `MAX_TOKENS`).
+
+## Arquitectura
+
+El formato del JSONL solo se conoce en `src/input/`:
+
+- `input/mod.rs`: frontera única, `parse_line(&str) -> Result<LineOutcome, ParseError>`.
+  `LineOutcome` es un `Record` (predicción exitosa) o una predicción fallida.
+- `input/vertex_batch.rs`: structs de serde del formato batch de Vertex AI / Gemini y su
+  conversión a `Record`.
+
+El resto del programa (deduplicación en `consolidator.rs`, exportadores en `exporters/`)
+trabaja con `models::Record` y `models::TokenReport`. Si el formato cambia, el ajuste se
+hace en el adaptador. Para soportar un formato distinto, se agrega otro adaptador junto a
+`vertex_batch.rs` y se despacha hacia él desde `parse_line`.
 
 ---
 Proyecto desarrollado como parte de un experimento en Rust.
