@@ -14,6 +14,21 @@ pub enum AppError {
     #[error("No se encontraron archivos .jsonl en {}", dir.display())]
     NoJsonlFiles { dir: PathBuf },
 
+    /// Hubo líneas con contenido pero ninguna se pudo interpretar: casi siempre
+    /// significa que cambió el formato del JSONL. Se informa la primera falla para
+    /// que el motivo (ej. "missing field `modelVersion`") sea visible de inmediato.
+    #[error(
+        "Ninguna línea se pudo interpretar ({parse_errors} con error); es probable que haya \
+         cambiado el formato del JSONL. Primer error en {}, línea {line}: {message}",
+        file.display()
+    )]
+    NoValidRecords {
+        parse_errors: usize,
+        file: PathBuf,
+        line: usize,
+        message: String,
+    },
+
     #[error(
         "Se detectaron {count} key(s) con candidatos en conflicto (mismo key+texto, distinta metadata).\n\
          Complete la columna 'decision' en {path} con 'mantener' (puede marcar más de un candidato por key) \

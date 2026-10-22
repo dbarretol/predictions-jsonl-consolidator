@@ -77,6 +77,70 @@ pub struct ConsolidationSummary {
     pub unreadable_files: Vec<PathBuf>,
 }
 
+/// Primera línea que no se pudo interpretar, para explicar la causa si al final
+/// ninguna línea resultó válida (típicamente, un cambio de formato del JSONL).
+struct ParseFailure {
+    file: PathBuf,
+    line: usize,
+    message: String,
+}
+
+type Group = FxHashMap<(String, u64), Vec<RecordEntry>>;
+
+/// Acumulador de la lectura paralela (`fold`/`reduce` de rayon): cada hilo llena el
+/// suyo y luego se combinan con `merge`.
+#[derive(Default)]
+struct ReadAccumulator {
+    groups: Group,
+    parse_errors: usize,
+    total_seen: usize,
+    unreadable_files: Vec<PathBuf>,
+    first_parse_error: Option<ParseFailure>,
+}
+
+impl ReadAccumulator {
+    fn record_parse_error(&mut self, file: &Path, line: usize, message: String) {
+        error!(
+            "No se pudo parsear la línea {} de {}: {}",
+            line,
+            file.display(),
+            message
+        );
+        self.parse_errors += 1;
+        if self.first_parse_error.is_none() {
+            self.first_parse_error = Some(ParseFailure {
+                file: file.to_path_buf(),
+                line,
+                message,
+            });
+        }
+    }
+
+    fn merge(mut self, other: Self) -> Self {
+        for (key, mut entries) in other.groups {
+            self.groups.entry(key).or_default().append(&mut entries);
+        }
+        self.parse_errors += other.parse_errors;
+        self.total_seen += other.total_seen;
+        self.unreadable_files.extend(other.unreadable_files);
+        // `reduce` combina en el orden de `files`, así que `self` siempre es el tramo
+        // anterior: conservar su error mantiene "el primero" en orden de archivos.
+        self.first_parse_error = self.first_parse_error.or(other.first_parse_error);
+        self
+    }
+}
+
+/// Describe un error de serde sin su sufijo "at line 1 column N": cada línea del
+/// JSONL se parsea por separado, así que esa "línea 1" confundiría con el número de
+/// línea real del archivo, que ya se informa aparte.
+fn describe_json_error(e: &serde_json::Error) -> String {
+    let full = e.to_string();
+    match full.rsplit_once(" at line ") {
+        Some((message, _)) => format!("{} (columna {})", message, e.column()),
+        None => full,
+    }
+}
+
 /// `true` si `path` es un `.jsonl` candidato a consolidarse (excluye resultados de
 /// una consolidación previa, que ya llevan el prefijo `consolidated_`).
 fn is_candidate_jsonl(path: &Path) -> bool {
@@ -169,16 +233,24 @@ pub fn deduplicate_files(
     // Agrupamos por (key, hash del texto): dos líneas con la misma key y el mismo
     // texto son duplicados; si además difieren en metadata (modelo/tokens), el grupo
     // queda con más de una línea distinta y se trata como un conflicto a resolver.
-    type Group = FxHashMap<(String, u64), Vec<RecordEntry>>;
-    let (groups, total_skipped, total_seen, unreadable_files) = files.par_iter().fold(
-        || (Group::default(), 0usize, 0usize, Vec::<PathBuf>::new()),
-        |(mut groups, mut skipped, mut total, mut unreadable), file_path| {
+    let ReadAccumulator {
+        groups,
+        parse_errors: total_skipped,
+        total_seen,
+        unreadable_files,
+        first_parse_error,
+    } = files
+        .par_iter()
+        .fold(ReadAccumulator::default, |mut acc, file_path| {
             match File::open(file_path) {
                 Ok(file) => {
                     let file_started_at = Instant::now();
                     let mut file_lines = 0usize;
                     let reader = BufReader::new(file);
-                    for line in reader.lines() {
+                    for (index, line) in reader.lines().enumerate() {
+                        // Numeración humana (desde 1) contando también las líneas en
+                        // blanco, para que coincida con lo que muestra un editor.
+                        let line_number = index + 1;
                         match line {
                             Ok(line) => {
                                 let trimmed = line.trim();
@@ -193,24 +265,32 @@ pub fn deduplicate_files(
                                 // Parseamos la línea una sola vez: el registro completo
                                 // (`TokenReport`) queda listo desde acá, para no tener que
                                 // volver a parsear el JSON al generar los reportes finales.
-                                if let Ok(pred) = serde_json::from_str::<PredictionLine>(trimmed) {
-                                    let text = pred.extract_text().map(|s| s.to_string());
-                                    let text_hash = fxhash::hash64(text.as_deref().unwrap_or("").as_bytes());
-                                    total += 1;
+                                match serde_json::from_str::<PredictionLine>(trimmed) {
+                                    Ok(pred) => {
+                                        let text = pred.extract_text().map(|s| s.to_string());
+                                        let text_hash = fxhash::hash64(
+                                            text.as_deref().unwrap_or("").as_bytes(),
+                                        );
+                                        acc.total_seen += 1;
 
-                                    let key = pred.key.clone();
-                                    let report = TokenReport::from(pred);
+                                        let key = pred.key.clone();
+                                        let report = TokenReport::from(pred);
 
-                                    groups.entry((key.clone(), text_hash)).or_default().push(RecordEntry {
-                                        key,
-                                        line: trimmed.to_string(),
-                                        text,
-                                        report,
-                                        source_file: file_path.clone(),
-                                    });
-                                } else {
-                                    error!("No se pudo parsear registro en archivo {:?}: {}", file_path, trimmed.chars().take(50).collect::<String>());
-                                    skipped += 1;
+                                        acc.groups.entry((key.clone(), text_hash)).or_default().push(
+                                            RecordEntry {
+                                                key,
+                                                line: trimmed.to_string(),
+                                                text,
+                                                report,
+                                                source_file: file_path.clone(),
+                                            },
+                                        );
+                                    }
+                                    Err(e) => acc.record_parse_error(
+                                        file_path,
+                                        line_number,
+                                        describe_json_error(&e),
+                                    ),
                                 }
                             }
                             Err(e) if e.kind() == ErrorKind::InvalidData => {
@@ -219,8 +299,7 @@ pub fn deduplicate_files(
                                 // conversión, así que la próxima iteración avanza sola.
                                 // Se cuenta como error de parseo en vez de perderse en silencio.
                                 progress.inc(1);
-                                error!("No se pudo leer una línea de {:?}: {}", file_path, e);
-                                skipped += 1;
+                                acc.record_parse_error(file_path, line_number, e.to_string());
                             }
                             Err(e) => {
                                 // Error de E/S real (no de encoding): a diferencia del caso
@@ -229,8 +308,11 @@ pub fn deduplicate_files(
                                 // (ej. sector dañado). Se corta la lectura de este archivo y
                                 // se cuenta como ilegible/incompleto en vez de arriesgar un
                                 // loop infinito.
-                                error!("Error de E/S leyendo {:?}, se corta la lectura del archivo: {}", file_path, e);
-                                unreadable.push(file_path.clone());
+                                error!(
+                                    "Error de E/S leyendo {:?}, se corta la lectura del archivo: {}",
+                                    file_path, e
+                                );
+                                acc.unreadable_files.push(file_path.clone());
                                 break;
                             }
                         }
@@ -244,23 +326,12 @@ pub fn deduplicate_files(
                 }
                 Err(e) => {
                     error!("No se pudo abrir archivo {:?}: {}", file_path, e);
-                    unreadable.push(file_path.clone());
+                    acc.unreadable_files.push(file_path.clone());
                 }
             }
-            (groups, skipped, total, unreadable)
-        }
-    ).reduce(
-        || (Group::default(), 0usize, 0usize, Vec::<PathBuf>::new()),
-        |(mut acc_groups, mut acc_skipped, mut acc_total, mut acc_unreadable), (groups, skipped, total, mut unreadable)| {
-            for (key, mut entries) in groups {
-                acc_groups.entry(key).or_default().append(&mut entries);
-            }
-            acc_skipped += skipped;
-            acc_total += total;
-            acc_unreadable.append(&mut unreadable);
-            (acc_groups, acc_skipped, acc_total, acc_unreadable)
-        }
-    );
+            acc
+        })
+        .reduce(ReadAccumulator::default, ReadAccumulator::merge);
 
     progress.finish_and_clear();
 
@@ -285,6 +356,18 @@ pub fn deduplicate_files(
             "Total de archivos que no se pudieron abrir: {}",
             unreadable_files.len()
         );
+    }
+
+    // Si hubo líneas pero ninguna se pudo interpretar, lo más probable es que haya
+    // cambiado el formato del JSONL: se corta acá, antes de generar reportes vacíos
+    // que pasarían por un resultado válido.
+    if let (0, Some(first_error)) = (total_seen, first_parse_error) {
+        return Err(AppError::NoValidRecords {
+            parse_errors: total_skipped,
+            file: first_error.file,
+            line: first_error.line,
+            message: first_error.message,
+        });
     }
 
     // Dentro de cada grupo, colapsamos duplicados exactos (sin conflicto) y dejamos
