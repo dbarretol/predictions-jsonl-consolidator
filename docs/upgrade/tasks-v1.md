@@ -326,8 +326,17 @@ terminaba con exit 0 y reportes vacíos, sin decir por qué.
   La API pública (`deduplicate_files`, `find_jsonl_files`) no cambió. Se agregaron 11 tests
   unitarios (discovery 4, dedup 4, decisions 3); la salida TXT/MD/CSV de los fixtures es
   idéntica byte a byte a la del paso anterior.
-- [ ] **9.11 Sin efectos secundarios en la deduplicación**: devolver los conflictos y que
+- [x] **9.11 Sin efectos secundarios en la deduplicación**: devolver los conflictos y que
   la orquestación decida dónde escribir `decisions.csv`.
+  Resuelto: `deduplicate_files` devuelve `Deduplication::Resolved(..)` o
+  `Deduplication::PendingDecisions(PendingConflicts)` y ya no recibe la carpeta de
+  salida. `PendingConflicts::write_template` escribe la plantilla y
+  `decisions::apply_decisions` (antes `resolve_conflicts`) solo aplica un CSV completado.
+  En `main.rs`, `decisions_template_path` la ubica junto al CSV de `--out-csv` si se pasó,
+  y si no en la carpeta procesada (sin cambios para el uso por defecto). Esto cierra el
+  pendiente de la revisión pre-merge: con salidas personalizadas, ya no se escribe nada en
+  la carpeta de entrada (antes el test del fixture dejaba `decisions.csv` en `example/`).
+  Test: `decisions_csv_goes_next_to_custom_out_csv`.
 - [ ] **9.12 Partir `main::run`** (`resolve_inputs`, `write_consolidated`,
   `OutputPaths::resolve`, `print_summary`) y unificar `DeduplicationOutcome` con
   `ConsolidationSummary`.

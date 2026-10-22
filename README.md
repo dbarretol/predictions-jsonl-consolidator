@@ -114,9 +114,10 @@ La metadata (modelo, tokens, traffic type) no forma parte de la clave de dedupli
   generado por dos modelos distintos, o con distinto conteo de tokens), es un **conflicto**:
   la herramienta no elige por vos. En su lugar:
   1. Se detiene sin generar el consolidado ni los reportes.
-  2. Escribe `decisions.csv` en la carpeta procesada, con una fila por candidato en conflicto
-     (`key`, `candidate_id`, `source_file`, `model`, tokens, una vista previa del texto y una
-     columna `decision` vacía).
+  2. Escribe `decisions.csv` en la carpeta procesada, o junto al CSV de `--out-csv` si se
+     indicó una ruta personalizada. Tiene una fila por candidato en conflicto (`key`,
+     `candidate_id`, `source_file`, `model`, tokens, una vista previa del texto y una columna
+     `decision` vacía).
   3. Completá la columna `decision` con `mantener` (podés marcar más de un candidato por
      `key` si querés conservar ambas variantes) o `ignorar`/vacío para descartarlo.
   4. Volvé a ejecutar agregando `--decisions decisions.csv`. Si alguna `key` queda sin ningún
@@ -188,8 +189,10 @@ La consolidación vive en `src/pipeline/`, una etapa por archivo:
 - `reader.rs`: lectura paralela; convierte cada línea con `input::parse_line` y cuenta
   errores de parseo, predicciones fallidas y archivos ilegibles.
 - `dedup.rs`: colapsa duplicados exactos y separa los conflictos. Es lógica pura, sin E/S.
-- `decisions.rs`: escribe y aplica `decisions.csv`.
-- `mod.rs`: orquesta las etapas (`deduplicate_files`).
+- `decisions.rs`: genera la plantilla de `decisions.csv` y aplica la versión completada.
+- `mod.rs`: orquesta las etapas (`deduplicate_files`). El pipeline no escribe archivos:
+  si hay conflictos sin `--decisions`, los devuelve (`Deduplication::PendingDecisions`) y
+  `main.rs` decide dónde guardar la plantilla.
 
 Los exportadores (`src/exporters/`) generan el TXT, el MD y el CSV a partir de los
 registros resueltos.
