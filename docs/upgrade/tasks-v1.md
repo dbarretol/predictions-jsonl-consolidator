@@ -248,6 +248,69 @@ el plan queda cerrado** (abiertas solo las diferidas a propósito: 4.4, 5.5, 6.5
 
 ---
 
+## Fase 9 — Resistencia a cambios de formato y arquitectura (2026-10-22)
+
+Revisión orientada a que un cambio en el formato del JSONL sea fácil de absorber.
+Hallazgo principal, reproducido: renombrar un solo campo (`modelVersion` → `model`)
+terminaba con exit 0 y reportes vacíos, sin decir por qué.
+
+### Lógica / formato
+
+- [x] **9.1 Un formato roto pasa en silencio**
+  Se descartaba el error de serde (`if let Ok(...)`) y no se informaba el número de línea.
+  Resuelto: cada línea inválida se registra como `No se pudo parsear la línea N de
+  <archivo>: <motivo de serde>`; si ninguna línea es válida se corta antes de generar
+  reportes con `AppError::NoValidRecords` (exit 1), que incluye el primer error. La
+  lectura paralela usa ahora un `ReadAccumulator` con nombre en vez de una tupla.
+  Tests: `format_change_fails_with_reason_instead_of_empty_reports` y el número de línea
+  en `corrupt_line_is_counted_and_skipped_without_failing`.
+- [ ] **9.2 Una sola frontera con el formato**
+  Hoy el formato se conoce en `parser.rs`, `models.rs` (`From<PredictionLine>`, strings
+  `"IMAGE"`/`"TEXT"`) y `consolidator.rs`. Crear `input::parse_line(&str) -> Result<Record,
+  ParseError>` y un adaptador `input/vertex_batch.rs`; el resto trabaja con `Record`.
+- [ ] **9.3 Campos obligatorios no esenciales**: solo `key` es imprescindible;
+  `modelVersion`/`usageMetadata` deberían ser opcionales y reportarse como desconocidos.
+- [ ] **9.4 `status` de Vertex batch**: las predicciones fallidas (con `status` y sin
+  `response`) se cuentan hoy como error de parseo; contarlas aparte con su mensaje.
+- [ ] **9.5 `extract_text` solo lee `parts[0]`**: concatenar las partes de texto que no
+  sean `thought: true` (las partes ya traen `thoughtSignature`).
+- [ ] **9.6 `finishReason` no se captura**: los registros `MAX_TOKENS` salen como "sin
+  texto" sin explicación; agregarlo al CSV.
+- [ ] **9.7 `TrafficType` con pérdida**: `#[serde(other)] Unknown` descarta el valor
+  (`PROVISIONED_THROUGHPUT` → `Unknown`); usar `String` o `Other(String)`.
+- [ ] **9.8 Modalidades descartadas en silencio**: solo se suman `IMAGE`/`TEXT`;
+  `candidatesTokensDetails` se ignora.
+- [ ] **9.9 Determinismo de `candidate_id`**: `find_jsonl_files` no ordena y, desde 8.1,
+  el representante de un grupo equivalente es el primero visto; si el orden cambia entre
+  corridas, los IDs de `decisions.csv` no coinciden. Ordenar archivos y derivar el ID de
+  los campos exportados.
+
+### Estructura / mantenibilidad
+
+- [ ] **9.10 Dividir `consolidator.rs`** en `discovery`, `reader`, `dedup` (puro, con tests
+  unitarios) y `decisions`.
+- [ ] **9.11 Sin efectos secundarios en la deduplicación**: devolver los conflictos y que
+  la orquestación decida dónde escribir `decisions.csv`.
+- [ ] **9.12 Partir `main::run`** (`resolve_inputs`, `write_consolidated`,
+  `OutputPaths::resolve`, `print_summary`) y unificar `DeduplicationOutcome` con
+  `ConsolidationSummary`.
+- [ ] **9.13 Separar `TokenReport`** en `Usage` (dominio, criterio de dedup) y `CsvRow`
+  (esquema del CSV), para que agregar una columna no cambie la deduplicación.
+- [ ] **9.14 Unificar `RecordEntry`/`ProcessedRecord`** y mover el placeholder `"..."` a
+  los exportadores TXT/MD.
+
+### Tests / legibilidad
+
+- [ ] **9.15 Fixtures por versión de formato** (`tests/fixtures/vertex_batch_v1/`) con test
+  de 0 errores de parseo; helper de líneas con `serde_json::json!` en `tests/common/`;
+  tests unitarios del parser desde strings JSON en vez de structs armados a mano.
+- [ ] **9.16 Nombres**: `parser.rs` define el esquema de entrada; en `run` el mismo dato
+  cambia de nombre (`parse_errors` → `total_skipped` → `parse_errors`).
+
+Orden sugerido: 9.1 → 9.2 (absorbe 9.3–9.8) → 9.9 → 9.10–9.14 → 9.15–9.16.
+
+---
+
 ## Orden sugerido de ejecución
 
 1. **Fase 1 completa** — bajo esfuerzo, es lo que el usuario percibe primero.

@@ -52,6 +52,7 @@ cargo run --
 - **Nombres de archivo**: Todos los archivos generados (`.jsonl` consolidado, `.txt`, `.md`, `.csv`) incluyen un timestamp (`YYYYMMDD_HHMMSS`) para evitar sobreescrituras.
 - **Rutas de salida personalizadas** (`--out-txt`/`--out-md`/`--out-csv`): se crean los directorios padre que falten. `jsonl_extract` solo se crea si al menos una de las tres rutas de salida sigue usando su valor por defecto.
 - **Archivos `.jsonl` ilegibles** (en modo `--dir` o auto-modo): no detienen la consolidación de los demás archivos, pero el resultado puede quedar incompleto. Un archivo cuenta como ilegible si no se pudo abrir, o si ocurre un error de E/S persistente mientras se lee (ej. fallo físico del disco); una línea puntual con encoding inválido (UTF-8) no cuenta como archivo ilegible, sino como línea con error de parseo, y la lectura del resto del archivo continúa normalmente. Los archivos ilegibles se cuentan y se listan en el resumen final, y el programa termina con código de salida distinto de cero para que no pase desapercibido.
+- **Líneas que no se pueden interpretar**: cada una se registra con su número de línea y el motivo (ej. `No se pudo parsear la línea 7 de preds.jsonl: missing field `modelVersion``), se cuenta en "Líneas con error de parseo" y la consolidación sigue con el resto. Si **ninguna** línea resulta válida, casi siempre es porque cambió el formato del JSONL: el programa se detiene **sin generar reportes** (que saldrían vacíos), muestra el primer error y termina con código de salida distinto de cero.
 
 ### Ejemplo de uso:
 
