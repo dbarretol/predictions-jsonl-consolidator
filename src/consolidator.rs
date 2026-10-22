@@ -27,10 +27,17 @@ pub struct RecordEntry {
 }
 
 impl RecordEntry {
-    /// Identificador estable del candidato entre corridas (hash de la línea cruda),
-    /// usado para enlazar `decisions.csv` con el candidato que describe.
+    /// Identificador estable del candidato entre corridas, usado para enlazar
+    /// `decisions.csv` con el candidato que describe. Se deriva de lo que se exporta
+    /// (texto + `TokenReport`, que incluye la key), el mismo criterio que define un
+    /// duplicado exacto: así no depende de cuál de varias líneas equivalentes quedó
+    /// como representante del grupo (eso varía con el orden de lectura) ni de campos
+    /// que no se reportan, como `responseId`.
     fn candidate_id(&self) -> String {
-        format!("{:016x}", fxhash::hash64(self.line.as_bytes()))
+        // JSON con orden de campos fijo: una representación canónica del candidato.
+        let canonical = serde_json::to_string(&(&self.text, &self.report))
+            .expect("texto y TokenReport siempre se pueden serializar");
+        format!("{:016x}", fxhash::hash64(canonical.as_bytes()))
     }
 }
 
@@ -147,7 +154,8 @@ fn is_candidate_jsonl(path: &Path) -> bool {
 }
 
 /// Lista los archivos `.jsonl` a consolidar dentro de una carpeta. Por defecto solo
-/// mira el nivel superior; con `recursive` también recorre subcarpetas.
+/// mira el nivel superior; con `recursive` también recorre subcarpetas. El resultado
+/// sale en orden natural de ruta.
 pub fn find_jsonl_files(dir: &Path, recursive: bool) -> Result<Vec<PathBuf>> {
     let mut jsonl_files = Vec::new();
 
@@ -193,6 +201,11 @@ pub fn find_jsonl_files(dir: &Path, recursive: bool) -> Result<Vec<PathBuf>> {
             dir: dir.to_path_buf(),
         });
     }
+
+    // Ni `read_dir` ni `WalkDir` garantizan un orden: se ordena para que la corrida sea
+    // reproducible (orden de lectura y, con él, qué línea representa a un grupo de
+    // duplicados en el `consolidated_*.jsonl`).
+    jsonl_files.sort_by(|a, b| natord::compare(&a.to_string_lossy(), &b.to_string_lossy()));
 
     Ok(jsonl_files)
 }
