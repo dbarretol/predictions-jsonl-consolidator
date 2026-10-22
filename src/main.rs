@@ -2,8 +2,8 @@ mod cli;
 mod consolidator;
 mod errors;
 mod exporters;
+mod input;
 mod models;
-mod parser;
 
 use anyhow::{Context, Result, bail};
 use chrono::Local;
@@ -117,6 +117,7 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
     let resolved_records = outcome.records;
     let total_seen = outcome.total_seen;
     let total_skipped = outcome.parse_errors;
+    let failed_predictions = outcome.failed_predictions;
     let unreadable_files = outcome.unreadable_files;
     let discarded_by_decision = outcome.discarded_by_decision;
     // Los duplicados exactos son total_seen menos lo que sobrevivió menos lo que se
@@ -164,6 +165,7 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
         duplicates_removed,
         discarded_by_decision,
         parse_errors: total_skipped,
+        failed_predictions,
         consolidated_file,
         unreadable_files,
     };
@@ -204,7 +206,11 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
             Some(text) => text,
             None => {
                 records_without_text += 1;
-                error!(key = %entry.key, "Registro sin texto extraído");
+                error!(
+                    key = %entry.key,
+                    finish_reason = entry.report.finish_reason.as_deref().unwrap_or("desconocido"),
+                    "Registro sin texto extraído"
+                );
                 "...".to_string()
             }
         };
@@ -232,6 +238,10 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
     );
     println!("  Líneas procesadas:          {}", lines_processed);
     println!("  Líneas con error de parseo: {}", summary.parse_errors);
+    println!(
+        "  Predicciones fallidas:      {}",
+        summary.failed_predictions
+    );
     println!(
         "  Duplicados eliminados:      {}",
         summary.duplicates_removed

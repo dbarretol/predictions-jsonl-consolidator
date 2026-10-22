@@ -1,6 +1,6 @@
 use crate::errors::{AppError, Result};
+use crate::input::{self, LineOutcome};
 use crate::models::TokenReport;
-use crate::parser::PredictionLine;
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
@@ -20,7 +20,7 @@ pub struct RecordEntry {
     pub key: String,
     pub line: String,
     /// Texto extraído de la respuesta; `None` si el registro no tiene texto (ver
-    /// `PredictionLine::extract_text`), para distinguir eso de un texto vacío real.
+    /// `models::Record`), para distinguir eso de un texto vacío real.
     pub text: Option<String>,
     pub report: TokenReport,
     pub source_file: PathBuf,
@@ -58,6 +58,8 @@ pub struct DeduplicationOutcome {
     pub records: Vec<RecordEntry>,
     pub total_seen: usize,
     pub parse_errors: usize,
+    /// Líneas válidas en las que la API informó que la predicción falló (`status`).
+    pub failed_predictions: usize,
     pub unreadable_files: Vec<PathBuf>,
     pub discarded_by_decision: usize,
 }
@@ -71,6 +73,8 @@ pub struct ConsolidationSummary {
     /// No son duplicados: son variantes distintas que el usuario eligió no conservar.
     pub discarded_by_decision: usize,
     pub parse_errors: usize,
+    /// Predicciones que la API marcó como fallidas: no traen respuesta que exportar.
+    pub failed_predictions: usize,
     /// Ruta del `consolidated_*.jsonl` generado, si se combinaron varios archivos.
     pub consolidated_file: Option<PathBuf>,
     /// Archivos `.jsonl` que no se pudieron abrir (el consolidado puede quedar incompleto).
@@ -93,6 +97,7 @@ type Group = FxHashMap<(String, u64), Vec<RecordEntry>>;
 struct ReadAccumulator {
     groups: Group,
     parse_errors: usize,
+    failed_predictions: usize,
     total_seen: usize,
     unreadable_files: Vec<PathBuf>,
     first_parse_error: Option<ParseFailure>,
@@ -121,23 +126,13 @@ impl ReadAccumulator {
             self.groups.entry(key).or_default().append(&mut entries);
         }
         self.parse_errors += other.parse_errors;
+        self.failed_predictions += other.failed_predictions;
         self.total_seen += other.total_seen;
         self.unreadable_files.extend(other.unreadable_files);
         // `reduce` combina en el orden de `files`, así que `self` siempre es el tramo
         // anterior: conservar su error mantiene "el primero" en orden de archivos.
         self.first_parse_error = self.first_parse_error.or(other.first_parse_error);
         self
-    }
-}
-
-/// Describe un error de serde sin su sufijo "at line 1 column N": cada línea del
-/// JSONL se parsea por separado, así que esa "línea 1" confundiría con el número de
-/// línea real del archivo, que ya se informa aparte.
-fn describe_json_error(e: &serde_json::Error) -> String {
-    let full = e.to_string();
-    match full.rsplit_once(" at line ") {
-        Some((message, _)) => format!("{} (columna {})", message, e.column()),
-        None => full,
     }
 }
 
@@ -236,6 +231,7 @@ pub fn deduplicate_files(
     let ReadAccumulator {
         groups,
         parse_errors: total_skipped,
+        failed_predictions,
         total_seen,
         unreadable_files,
         first_parse_error,
@@ -265,31 +261,38 @@ pub fn deduplicate_files(
                                 // Parseamos la línea una sola vez: el registro completo
                                 // (`TokenReport`) queda listo desde acá, para no tener que
                                 // volver a parsear el JSON al generar los reportes finales.
-                                match serde_json::from_str::<PredictionLine>(trimmed) {
-                                    Ok(pred) => {
-                                        let text = pred.extract_text().map(|s| s.to_string());
+                                // El formato concreto solo lo conoce `input`.
+                                match input::parse_line(trimmed) {
+                                    Ok(LineOutcome::Record(record)) => {
                                         let text_hash = fxhash::hash64(
-                                            text.as_deref().unwrap_or("").as_bytes(),
+                                            record.text.as_deref().unwrap_or("").as_bytes(),
                                         );
                                         acc.total_seen += 1;
-
-                                        let key = pred.key.clone();
-                                        let report = TokenReport::from(pred);
-
-                                        acc.groups.entry((key.clone(), text_hash)).or_default().push(
-                                            RecordEntry {
-                                                key,
+                                        acc.groups
+                                            .entry((record.key.clone(), text_hash))
+                                            .or_default()
+                                            .push(RecordEntry {
+                                                key: record.key,
                                                 line: trimmed.to_string(),
-                                                text,
-                                                report,
+                                                text: record.text,
+                                                report: record.report,
                                                 source_file: file_path.clone(),
-                                            },
+                                            });
+                                    }
+                                    Ok(LineOutcome::FailedPrediction { key, status }) => {
+                                        error!(
+                                            "Predicción fallida (key {}) en la línea {} de {}: {}",
+                                            key,
+                                            line_number,
+                                            file_path.display(),
+                                            status
                                         );
+                                        acc.failed_predictions += 1;
                                     }
                                     Err(e) => acc.record_parse_error(
                                         file_path,
                                         line_number,
-                                        describe_json_error(&e),
+                                        e.to_string(),
                                     ),
                                 }
                             }
@@ -410,6 +413,7 @@ pub fn deduplicate_files(
         records: resolved_records,
         total_seen,
         parse_errors: total_skipped,
+        failed_predictions,
         unreadable_files,
         discarded_by_decision,
     })
@@ -469,7 +473,7 @@ fn resolve_conflicts(
                             .and_then(|s| s.to_str())
                             .unwrap_or("")
                             .to_string(),
-                        model: entry.report.model.clone(),
+                        model: entry.report.model.clone().unwrap_or_default(),
                         prompt_tokens: entry.report.prompt_tokens,
                         candidate_tokens: entry.report.candidate_tokens,
                         total_tokens: entry.report.total_tokens,
