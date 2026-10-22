@@ -107,11 +107,20 @@ pub fn find_jsonl_files(dir: &Path, recursive: bool) -> Result<Vec<PathBuf>> {
         }
     } else {
         let entries = fs::read_dir(dir).map_err(|source| {
-            AppError::io(format!("No se pudo leer la carpeta: {}", dir.display()), source)
+            AppError::io(
+                format!("No se pudo leer la carpeta: {}", dir.display()),
+                source,
+            )
         })?;
         for entry in entries {
             let entry = entry.map_err(|source| {
-                AppError::io(format!("No se pudo leer una entrada de la carpeta: {}", dir.display()), source)
+                AppError::io(
+                    format!(
+                        "No se pudo leer una entrada de la carpeta: {}",
+                        dir.display()
+                    ),
+                    source,
+                )
             })?;
             let path = entry.path();
             if path.is_file() && is_candidate_jsonl(&path) {
@@ -121,7 +130,9 @@ pub fn find_jsonl_files(dir: &Path, recursive: bool) -> Result<Vec<PathBuf>> {
     }
 
     if jsonl_files.is_empty() {
-        return Err(AppError::NoJsonlFiles { dir: dir.to_path_buf() });
+        return Err(AppError::NoJsonlFiles {
+            dir: dir.to_path_buf(),
+        });
     }
 
     Ok(jsonl_files)
@@ -264,20 +275,33 @@ pub fn deduplicate_files(
     );
 
     if total_skipped > 0 {
-        error!("Total de líneas ignoradas por error de parseo: {}", total_skipped);
+        error!(
+            "Total de líneas ignoradas por error de parseo: {}",
+            total_skipped
+        );
     }
     if !unreadable_files.is_empty() {
-        error!("Total de archivos que no se pudieron abrir: {}", unreadable_files.len());
+        error!(
+            "Total de archivos que no se pudieron abrir: {}",
+            unreadable_files.len()
+        );
     }
 
-    // Dentro de cada grupo, colapsamos líneas crudas idénticas (duplicado exacto,
-    // sin conflicto) y dejamos solo variantes distintas por metadata.
+    // Dentro de cada grupo, colapsamos duplicados exactos (sin conflicto) y dejamos
+    // solo variantes distintas por metadata. "Exacto" se mide sobre lo que se exporta
+    // (texto + `TokenReport`), no sobre la línea cruda: re-ejecutar el mismo prompt
+    // cambia campos que no se reportan (`responseId`, `createTime`, `processed_time`,
+    // la URI de la imagen, el orden de `promptTokensDetails`) y eso no debe pedir una
+    // decisión al usuario, ya que en `decisions.csv` los candidatos se verían idénticos.
     let mut resolved_records: Vec<RecordEntry> = Vec::new();
     let mut conflict_groups: Vec<Vec<RecordEntry>> = Vec::new();
     for (_key, entries) in groups {
         let mut distinct: Vec<RecordEntry> = Vec::new();
         for entry in entries {
-            if !distinct.iter().any(|e: &RecordEntry| e.line == entry.line) {
+            if !distinct
+                .iter()
+                .any(|e: &RecordEntry| e.text == entry.text && e.report == entry.report)
+            {
                 distinct.push(entry);
             }
         }
@@ -289,7 +313,12 @@ pub fn deduplicate_files(
     }
 
     let discarded_by_decision = if !conflict_groups.is_empty() {
-        resolve_conflicts(decisions_dir, decisions_path, conflict_groups, &mut resolved_records)?
+        resolve_conflicts(
+            decisions_dir,
+            decisions_path,
+            conflict_groups,
+            &mut resolved_records,
+        )?
     } else {
         0
     };
@@ -305,7 +334,10 @@ pub fn deduplicate_files(
 
 /// Trunca y aplana un texto para usarlo como vista previa en `decisions.csv`.
 fn text_preview(text: &str) -> String {
-    let flattened: String = text.chars().map(|c| if c.is_whitespace() { ' ' } else { c }).collect();
+    let flattened: String = text
+        .chars()
+        .map(|c| if c.is_whitespace() { ' ' } else { c })
+        .collect();
     let truncated: String = flattened.chars().take(100).collect();
     if flattened.chars().count() > 100 {
         format!("{}...", truncated)
@@ -334,7 +366,13 @@ fn resolve_conflicts(
     let Some(decisions_path) = decisions_path else {
         let out_path = dir.join("decisions.csv");
         let mut writer = csv::Writer::from_path(&out_path).map_err(|source| {
-            AppError::csv(format!("No se pudo crear el archivo de decisiones: {}", out_path.display()), source)
+            AppError::csv(
+                format!(
+                    "No se pudo crear el archivo de decisiones: {}",
+                    out_path.display()
+                ),
+                source,
+            )
         })?;
         for group in &conflict_groups {
             for entry in group {
@@ -356,12 +394,18 @@ fn resolve_conflicts(
                         decision: String::new(),
                     })
                     .map_err(|source| {
-                        AppError::csv(format!("No se pudo escribir en {}", out_path.display()), source)
+                        AppError::csv(
+                            format!("No se pudo escribir en {}", out_path.display()),
+                            source,
+                        )
                     })?;
             }
         }
         writer.flush().map_err(|source| {
-            AppError::io(format!("No se pudo finalizar {}", out_path.display()), source)
+            AppError::io(
+                format!("No se pudo finalizar {}", out_path.display()),
+                source,
+            )
         })?;
 
         return Err(AppError::ConflictsPendingResolution {
@@ -371,12 +415,21 @@ fn resolve_conflicts(
     };
 
     let mut reader = csv::Reader::from_path(decisions_path).map_err(|source| {
-        AppError::csv(format!("No se pudo abrir el archivo de decisiones: {}", decisions_path.display()), source)
+        AppError::csv(
+            format!(
+                "No se pudo abrir el archivo de decisiones: {}",
+                decisions_path.display()
+            ),
+            source,
+        )
     })?;
     let mut decisions: FxHashMap<String, String> = FxHashMap::default();
     for row in reader.deserialize::<DecisionRow>() {
         let row = row.map_err(|source| {
-            AppError::csv(format!("No se pudo leer una fila de {}", decisions_path.display()), source)
+            AppError::csv(
+                format!("No se pudo leer una fila de {}", decisions_path.display()),
+                source,
+            )
         })?;
         decisions.insert(row.candidate_id, row.decision.trim().to_lowercase());
     }
@@ -390,7 +443,9 @@ fn resolve_conflicts(
         let group_size = group.len();
         let mut kept: Vec<RecordEntry> = group
             .into_iter()
-            .filter(|entry| decisions.get(&entry.candidate_id()).map(|d| d.as_str()) == Some("mantener"))
+            .filter(|entry| {
+                decisions.get(&entry.candidate_id()).map(|d| d.as_str()) == Some("mantener")
+            })
             .collect();
         if kept.is_empty() {
             unresolved_keys.push(group_key);

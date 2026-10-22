@@ -1,7 +1,7 @@
 use crate::parser::{PredictionLine, TrafficType};
 use serde::Serialize;
 
-#[derive(Serialize, Debug, Clone)]
+#[derive(Serialize, Debug, Clone, PartialEq)]
 pub struct TokenReport {
     pub key: String,
     pub model: String,

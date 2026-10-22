@@ -86,7 +86,9 @@ mod tests {
     use super::*;
 
     fn part(text: Option<&str>) -> Part {
-        Part { text: text.map(String::from) }
+        Part {
+            text: text.map(String::from),
+        }
     }
 
     #[test]
@@ -95,7 +97,9 @@ mod tests {
             key: "k".into(),
             response: Response {
                 candidates: Some(vec![Candidate {
-                    content: Content { parts: Some(vec![part(Some("Hola"))]) },
+                    content: Content {
+                        parts: Some(vec![part(Some("Hola"))]),
+                    },
                 }]),
                 model_version: "model-a".into(),
                 usage_metadata: serde_json::from_str("{}").unwrap(),
@@ -135,7 +139,9 @@ mod tests {
         let pred = PredictionLine {
             key: "k".into(),
             response: Response {
-                candidates: Some(vec![Candidate { content: Content { parts: None } }]),
+                candidates: Some(vec![Candidate {
+                    content: Content { parts: None },
+                }]),
                 model_version: "model-a".into(),
                 usage_metadata: serde_json::from_str("{}").unwrap(),
             },
@@ -149,7 +155,9 @@ mod tests {
             key: "k".into(),
             response: Response {
                 candidates: Some(vec![Candidate {
-                    content: Content { parts: Some(vec![part(None)]) },
+                    content: Content {
+                        parts: Some(vec![part(None)]),
+                    },
                 }]),
                 model_version: "model-a".into(),
                 usage_metadata: serde_json::from_str("{}").unwrap(),

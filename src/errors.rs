@@ -55,10 +55,16 @@ pub enum AppError {
 
 impl AppError {
     pub fn io(message: impl Into<String>, source: io::Error) -> Self {
-        AppError::Io { message: message.into(), source }
+        AppError::Io {
+            message: message.into(),
+            source,
+        }
     }
 
     pub fn csv(message: impl Into<String>, source: csv::Error) -> Self {
-        AppError::Csv { message: message.into(), source }
+        AppError::Csv {
+            message: message.into(),
+            source,
+        }
     }
 }

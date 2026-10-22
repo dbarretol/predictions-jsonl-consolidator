@@ -5,11 +5,11 @@ mod exporters;
 mod models;
 mod parser;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use chrono::Local;
 use clap::Parser;
 use cli::Args;
-use consolidator::{deduplicate_files, find_jsonl_files, ConsolidationSummary};
+use consolidator::{ConsolidationSummary, deduplicate_files, find_jsonl_files};
 use models::ProcessedRecord;
 use std::fs::{self, File};
 use std::io::{self, Write};
@@ -78,27 +78,42 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
     let (base_dir, source_files, is_dir_scan) = if let Some(dir) = &args.dir {
         (dir.clone(), find_jsonl_files(dir, args.recursive)?, true)
     } else if let Some(input) = &args.input {
-        let base = input.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
+        let base = input
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
         (base, vec![input.clone()], false)
     } else {
-        let current_dir = std::env::current_dir()
-            .context("No se pudo determinar la carpeta actual")?;
+        let current_dir =
+            std::env::current_dir().context("No se pudo determinar la carpeta actual")?;
         println!(
             "No se especificó archivo ni carpeta; usando la carpeta actual: {}",
             current_dir.display()
         );
-        (current_dir.clone(), find_jsonl_files(&current_dir, args.recursive)?, true)
+        (
+            current_dir.clone(),
+            find_jsonl_files(&current_dir, args.recursive)?,
+            true,
+        )
     };
 
     if is_dir_scan {
         if source_files.len() == 1 {
-            println!("Se encontró un único archivo JSONL: {}", source_files[0].display());
+            println!(
+                "Se encontró un único archivo JSONL: {}",
+                source_files[0].display()
+            );
         } else {
             println!("Consolidando {} archivos JSONL...", source_files.len());
         }
     }
 
-    let outcome = deduplicate_files(&source_files, &base_dir, decisions_path.as_deref(), !args.quiet)?;
+    let outcome = deduplicate_files(
+        &source_files,
+        &base_dir,
+        decisions_path.as_deref(),
+        !args.quiet,
+    )?;
     let resolved_records = outcome.records;
     let total_seen = outcome.total_seen;
     let total_skipped = outcome.parse_errors;
@@ -135,7 +150,10 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
                 )
             })?;
         }
-        println!("Archivo consolidado generado: {}", consolidated_path.display());
+        println!(
+            "Archivo consolidado generado: {}",
+            consolidated_path.display()
+        );
         Some(consolidated_path)
     } else {
         None
@@ -155,20 +173,23 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
     // hace falta crearlo. Los padres de rutas personalizadas también se crean.
     let extract_dir = base_dir.join("jsonl_extract");
 
-    let out_txt_path = args.out_txt.unwrap_or_else(|| {
-        extract_dir.join(format!("consolidado_{}.txt", timestamp))
-    });
-    let out_md_path = args.out_md.unwrap_or_else(|| {
-        extract_dir.join(format!("consolidado_{}.md", timestamp))
-    });
-    let out_csv_path = args.out_csv.unwrap_or_else(|| {
-        extract_dir.join(format!("reporte_tokens_{}.csv", timestamp))
-    });
+    let out_txt_path = args
+        .out_txt
+        .unwrap_or_else(|| extract_dir.join(format!("consolidado_{}.txt", timestamp)));
+    let out_md_path = args
+        .out_md
+        .unwrap_or_else(|| extract_dir.join(format!("consolidado_{}.md", timestamp)));
+    let out_csv_path = args
+        .out_csv
+        .unwrap_or_else(|| extract_dir.join(format!("reporte_tokens_{}.csv", timestamp)));
 
     for path in [&out_txt_path, &out_md_path, &out_csv_path] {
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
             fs::create_dir_all(parent).with_context(|| {
-                format!("No se pudo crear el directorio de salida: {}", parent.display())
+                format!(
+                    "No se pudo crear el directorio de salida: {}",
+                    parent.display()
+                )
             })?;
         }
     }
@@ -205,12 +226,21 @@ fn run(args: Args, timestamp: &str) -> Result<()> {
 
     println!("\nResumen:");
     println!("  Archivos leídos:            {}", summary.files_read);
-    println!("  Archivos ilegibles:         {}", summary.unreadable_files.len());
+    println!(
+        "  Archivos ilegibles:         {}",
+        summary.unreadable_files.len()
+    );
     println!("  Líneas procesadas:          {}", lines_processed);
     println!("  Líneas con error de parseo: {}", summary.parse_errors);
-    println!("  Duplicados eliminados:      {}", summary.duplicates_removed);
+    println!(
+        "  Duplicados eliminados:      {}",
+        summary.duplicates_removed
+    );
     if summary.discarded_by_decision > 0 {
-        println!("  Descartados por decisión:   {}", summary.discarded_by_decision);
+        println!(
+            "  Descartados por decisión:   {}",
+            summary.discarded_by_decision
+        );
     }
     println!("  Registros sin texto:        {}", records_without_text);
     println!("  Archivos generados:");
