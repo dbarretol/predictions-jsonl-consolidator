@@ -337,9 +337,19 @@ terminaba con exit 0 y reportes vacíos, sin decir por qué.
   pendiente de la revisión pre-merge: con salidas personalizadas, ya no se escribe nada en
   la carpeta de entrada (antes el test del fixture dejaba `decisions.csv` en `example/`).
   Test: `decisions_csv_goes_next_to_custom_out_csv`.
-- [ ] **9.12 Partir `main::run`** (`resolve_inputs`, `write_consolidated`,
+- [x] **9.12 Partir `main::run`** (`resolve_inputs`, `write_consolidated`,
   `OutputPaths::resolve`, `print_summary`) y unificar `DeduplicationOutcome` con
   `ConsolidationSummary`.
+  Resuelto: `main.rs` (66 líneas) quedó solo con el arranque (args, tracing, pausa en
+  auto-modo, exit code); la orquestación pasó a `src/app.rs`, donde `run` tiene ~35 líneas
+  y delega en `resolve_inputs` (`Inputs`), `request_decisions`, `write_consolidated`,
+  `OutputPaths::{resolve, create_parent_dirs}`, `to_processed_records` y `RunReport`
+  (`print` + `ensure_complete`). Se eliminó `ConsolidationSummary`: el pipeline devuelve
+  `DeduplicationOutcome { records, stats: DeduplicationStats }`, con `duplicates_removed`
+  ya calculado (antes se derivaba en `main` con restas). Verificado con el binario
+  anterior sobre los fixtures (archivo único y `--dir`, con una predicción fallida y una
+  línea corrupta agregadas): consolidado, TXT, MD, CSV y resumen idénticos; solo cambia
+  el módulo en el log de "Registro sin texto" (`::app`).
 - [ ] **9.13 Separar `TokenReport`** en `Usage` (dominio, criterio de dedup) y `CsvRow`
   (esquema del CSV), para que agregar una columna no cambie la deduplicación.
 - [ ] **9.14 Unificar `RecordEntry`/`ProcessedRecord`** y mover el placeholder `"..."` a

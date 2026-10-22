@@ -183,6 +183,10 @@ El resto del programa trabaja con `models::Record` y `models::TokenReport`. Si e
 cambia, el ajuste se hace en el adaptador. Para soportar un formato distinto, se agrega otro
 adaptador junto a `vertex_batch.rs` y se despacha hacia él desde `parse_line`.
 
+`src/main.rs` solo arranca el programa (argumentos, logging, pausa en auto-modo y código de
+salida). `src/app.rs` orquesta una corrida: resuelve las entradas, ejecuta el pipeline,
+escribe el consolidado y los reportes, e imprime el resumen.
+
 La consolidación vive en `src/pipeline/`, una etapa por archivo:
 
 - `discovery.rs`: qué archivos `.jsonl` procesar, en orden natural.
