@@ -231,6 +231,23 @@ el plan queda cerrado** (abiertas solo las diferidas a propósito: 4.4, 5.5, 6.5
 
 ---
 
+## Fase 8 — Revisión pre-merge (2026-10-22)
+
+- [x] **8.1 Re-ejecuciones del mismo prompt tratadas como conflicto**
+  Con datos reales (`example/predictions.jsonl`), dos líneas con igual key, texto, modelo y
+  tokens se marcaban como conflicto porque el colapso automático comparaba la línea cruda:
+  bastaba con que cambiaran `responseId`, `createTime`, `processed_time`, la URI de la
+  imagen o el orden de `promptTokensDetails`. En `decisions.csv` ambos candidatos se veían
+  idénticos, así que el usuario no tenía con qué decidir; además rompía el test
+  `example_fixture_processes_successfully`.
+  Resuelto: el duplicado exacto se mide sobre lo que se exporta (texto + `TokenReport`, que
+  ahora deriva `PartialEq`). Test de regresión:
+  `rerun_with_same_exported_fields_is_collapsed_without_conflict`.
+
+- [x] **8.2 `cargo fmt`** aplicado a todo el crate (había 43 bloques sin formatear).
+
+---
+
 ## Orden sugerido de ejecución
 
 1. **Fase 1 completa** — bajo esfuerzo, es lo que el usuario percibe primero.
