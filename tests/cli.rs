@@ -170,11 +170,34 @@ fn corrupt_line_is_counted_and_skipped_without_failing() {
 }
 
 #[test]
+fn failed_prediction_is_counted_apart_from_parse_errors() {
+    let dir = tempdir().unwrap();
+    let input = dir.path().join("preds.jsonl");
+    let failed = r#"{"key": "item-2", "status": "Bad Request: imagen inválida"}"#;
+    fs::write(
+        &input,
+        format!("{}\n{}\n", line("item-1", "Hola mundo"), failed),
+    )
+    .unwrap();
+
+    cmd()
+        .arg(&input)
+        .arg("--quiet")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Líneas procesadas:          1"))
+        .stdout(predicate::str::contains("Líneas con error de parseo: 0"))
+        .stdout(predicate::str::contains("Predicciones fallidas:      1"))
+        .stdout(predicate::str::contains("Bad Request: imagen inválida"));
+}
+
+#[test]
 fn format_change_fails_with_reason_instead_of_empty_reports() {
     let dir = tempdir().unwrap();
     let input = dir.path().join("preds.jsonl");
-    // Simula un cambio de formato: `modelVersion` renombrado en todas las líneas.
-    let renamed = |key: &str| line(key, "Hola mundo").replace("modelVersion", "model");
+    // Simula un cambio de formato en el único campo imprescindible: `key` renombrado
+    // a `id` en todas las líneas (la metadata ausente ya no descarta la línea).
+    let renamed = |key: &str| line(key, "Hola mundo").replace(r#""key""#, r#""id""#);
     fs::write(
         &input,
         format!("{}\n\n{}\n", renamed("item-1"), renamed("item-2")),
@@ -190,9 +213,7 @@ fn format_change_fails_with_reason_instead_of_empty_reports() {
         .stderr(predicate::str::contains(
             "Ninguna línea se pudo interpretar (2 con error)",
         ))
-        .stderr(predicate::str::contains(
-            "línea 1: missing field `modelVersion`",
-        ));
+        .stderr(predicate::str::contains("línea 1: missing field `key`"));
 
     // No debe generar reportes vacíos que pasen por un resultado válido.
     assert!(!dir.path().join("jsonl_extract").exists());
@@ -241,10 +262,12 @@ fn csv_output_is_well_formed() {
             "Traffic Type",
             "Prompt Image Tokens",
             "Prompt Text Tokens",
+            "Prompt Other Tokens",
             "Prompt Tokens",
             "Candidate Tokens",
             "Thoughts Tokens",
             "Total Tokens",
+            "Finish Reason",
         ]
     );
 
