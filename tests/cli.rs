@@ -165,7 +165,37 @@ fn corrupt_line_is_counted_and_skipped_without_failing() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Líneas con error de parseo: 1"))
-        .stdout(predicate::str::contains("Líneas procesadas:          1"));
+        .stdout(predicate::str::contains("Líneas procesadas:          1"))
+        .stdout(predicate::str::contains("No se pudo parsear la línea 2 de"));
+}
+
+#[test]
+fn format_change_fails_with_reason_instead_of_empty_reports() {
+    let dir = tempdir().unwrap();
+    let input = dir.path().join("preds.jsonl");
+    // Simula un cambio de formato: `modelVersion` renombrado en todas las líneas.
+    let renamed = |key: &str| line(key, "Hola mundo").replace("modelVersion", "model");
+    fs::write(
+        &input,
+        format!("{}\n\n{}\n", renamed("item-1"), renamed("item-2")),
+    )
+    .unwrap();
+
+    cmd()
+        .arg(&input)
+        .arg("--quiet")
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "Ninguna línea se pudo interpretar (2 con error)",
+        ))
+        .stderr(predicate::str::contains(
+            "línea 1: missing field `modelVersion`",
+        ));
+
+    // No debe generar reportes vacíos que pasen por un resultado válido.
+    assert!(!dir.path().join("jsonl_extract").exists());
 }
 
 #[test]
