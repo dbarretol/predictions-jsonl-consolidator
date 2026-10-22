@@ -125,7 +125,7 @@ La metadata (modelo, tokens, traffic type) no forma parte de la clave de dedupli
 
 Este flujo evita que la elección de "cuál sobrevive" dependa del orden no determinista de la
 consolidación paralela: siempre es una decisión explícita registrada en `decisions.csv`.
-El `candidate_id` se calcula a partir de lo que se exporta (texto + metadata del CSV), no de
+El `candidate_id` se calcula a partir de la key, el texto y la metadata de uso, no de
 la línea cruda. Por eso las decisiones siguen siendo válidas en la re-ejecución aunque cambie
 el orden o el nombre de los archivos. Los archivos de una carpeta se leen siempre en orden
 natural de ruta.
@@ -179,8 +179,10 @@ El formato del JSONL solo se conoce en `src/input/`:
 - `input/vertex_batch.rs`: structs de serde del formato batch de Vertex AI / Gemini y su
   conversión a `Record`.
 
-El resto del programa trabaja con `models::Record` y `models::TokenReport`. Si el formato
-cambia, el ajuste se hace en el adaptador. Para soportar un formato distinto, se agrega otro
+El resto del programa trabaja con `models::Record` y `models::Usage` (metadata de uso, sin
+nombres de columna). Si el formato cambia, el ajuste se hace en el adaptador. Las columnas
+del CSV de tokens se definen aparte, en `CsvRow` (`src/exporters/csv.rs`): agregarlas o
+renombrarlas no afecta la deduplicación. Para soportar un formato distinto, se agrega otro
 adaptador junto a `vertex_batch.rs` y se despacha hacia él desde `parse_line`.
 
 `src/main.rs` solo arranca el programa (argumentos, logging, pausa en auto-modo y código de

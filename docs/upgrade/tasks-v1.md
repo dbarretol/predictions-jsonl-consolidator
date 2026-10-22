@@ -311,7 +311,8 @@ terminaba con exit 0 y reportes vacíos, sin decir por qué.
   entre corridas para invertir el orden de lectura; falla con el ID anterior).
   Nota: los `decisions.csv` generados antes de este cambio ya no coinciden y hay que
   regenerarlos (son de uso inmediato, entre dos corridas seguidas). Agregar una columna
-  a `TokenReport` también cambia los IDs; se resolverá al separar `Usage` en 9.13.
+  a `TokenReport` también cambia los IDs; se resolverá al separar `Usage` en 9.13
+  (resuelto: ver 9.13).
 
 ### Estructura / mantenibilidad
 
@@ -350,8 +351,17 @@ terminaba con exit 0 y reportes vacíos, sin decir por qué.
   anterior sobre los fixtures (archivo único y `--dir`, con una predicción fallida y una
   línea corrupta agregadas): consolidado, TXT, MD, CSV y resumen idénticos; solo cambia
   el módulo en el log de "Registro sin texto" (`::app`).
-- [ ] **9.13 Separar `TokenReport`** en `Usage` (dominio, criterio de dedup) y `CsvRow`
+- [x] **9.13 Separar `TokenReport`** en `Usage` (dominio, criterio de dedup) y `CsvRow`
   (esquema del CSV), para que agregar una columna no cambie la deduplicación.
+  Resuelto: `models::TokenReport` se reemplazó por `models::Usage`, sin `key` (ya está
+  en el registro) y sin `serde(rename)`. `Record`, `RecordEntry` y `ProcessedRecord`
+  tienen `usage` en vez de `report`. Las columnas del CSV se definen solo en
+  `exporters/csv.rs` (`CsvRow<'a>`, que toma prestado de `ProcessedRecord`).
+  `candidate_id` es ahora el hash de (key, texto, `Usage`). Verificado con el binario
+  anterior: consolidado, TXT, MD, CSV y consola idénticos; los valores de `candidate_id`
+  cambian (por última vez por esta causa), así que un `decisions.csv` generado antes de
+  este cambio hay que regenerarlo. Agregar un campo nuevo a `Usage` (dato nuevo del
+  formato) sí cambia la deduplicación, a propósito: es metadata distinta.
 - [ ] **9.14 Unificar `RecordEntry`/`ProcessedRecord`** y mover el placeholder `"..."` a
   los exportadores TXT/MD.
 
