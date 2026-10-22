@@ -62,8 +62,16 @@ fn single_file_produces_txt_md_csv() {
 #[test]
 fn multi_file_dedup_removes_exact_duplicates() {
     let dir = tempdir().unwrap();
-    fs::write(dir.path().join("a.jsonl"), format!("{}\n", line("item-1", "Hola mundo"))).unwrap();
-    fs::write(dir.path().join("b.jsonl"), format!("{}\n", line("item-1", "Hola mundo"))).unwrap();
+    fs::write(
+        dir.path().join("a.jsonl"),
+        format!("{}\n", line("item-1", "Hola mundo")),
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("b.jsonl"),
+        format!("{}\n", line("item-1", "Hola mundo")),
+    )
+    .unwrap();
 
     cmd()
         .arg("--dir")
@@ -77,6 +85,44 @@ fn multi_file_dedup_removes_exact_duplicates() {
     let consolidated = find_file_with_ext(dir.path(), "jsonl");
     let content = fs::read_to_string(consolidated).unwrap();
     assert_eq!(content.lines().count(), 1);
+}
+
+/// Línea como la que produce re-ejecutar el mismo prompt: mismo texto y tokens, pero
+/// distinto `responseId` y distinto orden en `promptTokensDetails`.
+fn line_rerun(key: &str, text: &str, response_id: &str, image_first: bool) -> String {
+    let details = if image_first {
+        r#"[{"modality": "IMAGE", "tokenCount": 10}, {"modality": "TEXT", "tokenCount": 5}]"#
+    } else {
+        r#"[{"modality": "TEXT", "tokenCount": 5}, {"modality": "IMAGE", "tokenCount": 10}]"#
+    };
+    format!(
+        r#"{{"key": "{key}", "response": {{"responseId": "{response_id}", "candidates": [{{"content": {{"parts": [{{"text": "{text}"}}]}}}}], "modelVersion": "model-a", "usageMetadata": {{"promptTokenCount": 15, "promptTokensDetails": {details}, "candidatesTokenCount": 1, "totalTokenCount": 16}}}}}}"#
+    )
+}
+
+#[test]
+fn rerun_with_same_exported_fields_is_collapsed_without_conflict() {
+    let dir = tempdir().unwrap();
+    let input = dir.path().join("preds.jsonl");
+    fs::write(
+        &input,
+        format!(
+            "{}\n{}\n",
+            line_rerun("item-1", "Hola mundo", "resp-a", true),
+            line_rerun("item-1", "Hola mundo", "resp-b", false)
+        ),
+    )
+    .unwrap();
+
+    cmd()
+        .arg(&input)
+        .arg("--quiet")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Duplicados eliminados:      1"))
+        .stdout(predicate::str::contains("Líneas procesadas:          1"));
+
+    assert!(!dir.path().join("decisions.csv").exists());
 }
 
 #[test]
@@ -94,12 +140,16 @@ fn output_is_sorted_in_natural_order_not_lexicographic() {
 
     cmd().arg(&input).arg("--quiet").assert().success();
 
-    let txt = fs::read_to_string(find_file_with_ext(&dir.path().join("jsonl_extract"), "txt")).unwrap();
+    let txt =
+        fs::read_to_string(find_file_with_ext(&dir.path().join("jsonl_extract"), "txt")).unwrap();
     let pos_1 = txt.find("=== item-1 ===").unwrap();
     let pos_2 = txt.find("=== item-2 ===").unwrap();
     let pos_10 = txt.find("=== item-10 ===").unwrap();
     assert!(pos_1 < pos_2, "item-1 debería aparecer antes que item-2");
-    assert!(pos_2 < pos_10, "item-2 debería aparecer antes que item-10 (orden natural, no lexicográfico)");
+    assert!(
+        pos_2 < pos_10,
+        "item-2 debería aparecer antes que item-10 (orden natural, no lexicográfico)"
+    );
 }
 
 #[test]
@@ -131,7 +181,8 @@ fn record_without_text_is_counted_and_uses_placeholder() {
         .success()
         .stdout(predicate::str::contains("Registros sin texto:        1"));
 
-    let txt = fs::read_to_string(find_file_with_ext(&dir.path().join("jsonl_extract"), "txt")).unwrap();
+    let txt =
+        fs::read_to_string(find_file_with_ext(&dir.path().join("jsonl_extract"), "txt")).unwrap();
     assert!(txt.contains("..."));
 }
 
@@ -255,14 +306,19 @@ fn decisions_workflow_keeps_marked_candidate_on_rerun() {
         .stdout(predicate::str::contains("Descartados por decisión:   1"))
         .stdout(predicate::str::contains("Duplicados eliminados:      0"));
 
-    let txt = fs::read_to_string(find_file_with_ext(&dir.path().join("jsonl_extract"), "txt")).unwrap();
+    let txt =
+        fs::read_to_string(find_file_with_ext(&dir.path().join("jsonl_extract"), "txt")).unwrap();
     assert!(txt.contains("=== item-1 ==="));
     assert!(txt.contains("Hola mundo"));
 
     let csv_path = find_file_with_ext(&dir.path().join("jsonl_extract"), "csv");
     let mut reader = csv::Reader::from_path(csv_path).unwrap();
     let rows: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
-    assert_eq!(rows.len(), 1, "solo el candidato marcado 'mantener' debe sobrevivir");
+    assert_eq!(
+        rows.len(),
+        1,
+        "solo el candidato marcado 'mantener' debe sobrevivir"
+    );
     assert_eq!(rows[0].get(1), Some("model-b"));
 }
 
@@ -290,7 +346,9 @@ fn decisions_without_any_kept_candidate_blocks_with_clear_error() {
         .assert()
         .failure()
         .code(1)
-        .stderr(predicate::str::contains("no tiene ningún candidato marcado"));
+        .stderr(predicate::str::contains(
+            "no tiene ningún candidato marcado",
+        ));
 }
 
 #[test]
@@ -298,7 +356,11 @@ fn recursive_flag_finds_files_in_subfolders() {
     let dir = tempdir().unwrap();
     let sub = dir.path().join("subcarpeta");
     fs::create_dir(&sub).unwrap();
-    fs::write(sub.join("nested.jsonl"), format!("{}\n", line("item-1", "Anidado"))).unwrap();
+    fs::write(
+        sub.join("nested.jsonl"),
+        format!("{}\n", line("item-1", "Anidado")),
+    )
+    .unwrap();
 
     // Sin --recursive, el nivel superior no tiene ningún .jsonl: falla.
     cmd()
@@ -326,9 +388,15 @@ fn no_keys_flag_omits_separators_in_txt() {
     let input = dir.path().join("preds.jsonl");
     fs::write(&input, format!("{}\n", line("item-1", "Hola mundo"))).unwrap();
 
-    cmd().arg(&input).arg("--quiet").arg("--no-keys").assert().success();
+    cmd()
+        .arg(&input)
+        .arg("--quiet")
+        .arg("--no-keys")
+        .assert()
+        .success();
 
-    let txt = fs::read_to_string(find_file_with_ext(&dir.path().join("jsonl_extract"), "txt")).unwrap();
+    let txt =
+        fs::read_to_string(find_file_with_ext(&dir.path().join("jsonl_extract"), "txt")).unwrap();
     assert!(!txt.contains("=== item-1 ==="));
     assert!(txt.contains("Hola mundo"));
 }
@@ -339,7 +407,11 @@ fn unreadable_file_in_dir_mode_reports_and_fails() {
     use std::os::windows::fs::OpenOptionsExt;
 
     let dir = tempdir().unwrap();
-    fs::write(dir.path().join("good.jsonl"), format!("{}\n", line("item-1", "Hola mundo"))).unwrap();
+    fs::write(
+        dir.path().join("good.jsonl"),
+        format!("{}\n", line("item-1", "Hola mundo")),
+    )
+    .unwrap();
     let locked_path = dir.path().join("locked.jsonl");
     fs::write(&locked_path, format!("{}\n", line("item-2", "Bloqueado"))).unwrap();
 
@@ -386,5 +458,11 @@ fn example_fixture_processes_successfully() {
     assert!(out_dir.path().join("out.csv").exists());
     // No debe haberse creado jsonl_extract junto al fixture real: las tres rutas
     // de salida eran personalizadas.
-    assert!(!example_path.parent().unwrap().join("jsonl_extract").exists());
+    assert!(
+        !example_path
+            .parent()
+            .unwrap()
+            .join("jsonl_extract")
+            .exists()
+    );
 }
