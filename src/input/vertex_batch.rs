@@ -6,7 +6,7 @@
 //! no perder el texto por un campo de metadata renombrado.
 
 use super::{LineOutcome, ParseError};
-use crate::models::{Record, TokenReport};
+use crate::models::{Record, Usage};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -121,8 +121,9 @@ fn to_record(key: String, response: Response) -> Record {
     }
 
     Record {
-        report: TokenReport {
-            key: key.clone(),
+        key,
+        text,
+        usage: Usage {
             model: response.model_version,
             traffic_type: usage.traffic_type,
             prompt_image_tokens: image_tokens,
@@ -134,8 +135,6 @@ fn to_record(key: String, response: Response) -> Record {
             total_tokens: usage.total_token_count,
             finish_reason,
         },
-        key,
-        text,
     }
 }
 
@@ -210,9 +209,9 @@ mod tests {
         // se conserva y la metadata queda vacía/en cero.
         let rec = record(&with_parts(r#"[{"text": "Hola"}]"#));
         assert_eq!(rec.text.as_deref(), Some("Hola"));
-        assert_eq!(rec.report.model, None);
-        assert_eq!(rec.report.traffic_type, None);
-        assert_eq!(rec.report.total_tokens, 0);
+        assert_eq!(rec.usage.model, None);
+        assert_eq!(rec.usage.traffic_type, None);
+        assert_eq!(rec.usage.total_tokens, 0);
     }
 
     #[test]
@@ -255,9 +254,9 @@ mod tests {
         let rec = record(
             r#"{"key": "k", "response": {"candidates": [{"finishReason": "MAX_TOKENS"}], "usageMetadata": {"trafficType": "PROVISIONED_THROUGHPUT"}}}"#,
         );
-        assert_eq!(rec.report.finish_reason.as_deref(), Some("MAX_TOKENS"));
+        assert_eq!(rec.usage.finish_reason.as_deref(), Some("MAX_TOKENS"));
         assert_eq!(
-            rec.report.traffic_type.as_deref(),
+            rec.usage.traffic_type.as_deref(),
             Some("PROVISIONED_THROUGHPUT")
         );
     }
@@ -274,15 +273,15 @@ mod tests {
                     {"modality": "TEXT"}
                 ]}}}"#,
         );
-        let report = rec.report;
-        assert_eq!(report.model.as_deref(), Some("m"));
-        assert_eq!(report.prompt_text_tokens, 5);
-        assert_eq!(report.prompt_image_tokens, 10);
-        assert_eq!(report.prompt_other_tokens, 4);
-        assert_eq!(report.prompt_tokens, 20);
-        assert_eq!(report.candidate_tokens, 3);
-        assert_eq!(report.thoughts_tokens, 2);
-        assert_eq!(report.total_tokens, 25);
+        let usage = rec.usage;
+        assert_eq!(usage.model.as_deref(), Some("m"));
+        assert_eq!(usage.prompt_text_tokens, 5);
+        assert_eq!(usage.prompt_image_tokens, 10);
+        assert_eq!(usage.prompt_other_tokens, 4);
+        assert_eq!(usage.prompt_tokens, 20);
+        assert_eq!(usage.candidate_tokens, 3);
+        assert_eq!(usage.thoughts_tokens, 2);
+        assert_eq!(usage.total_tokens, 25);
     }
 
     /// Fixtures reales del repo: si el adaptador deja de entender el formato con el que

@@ -220,7 +220,7 @@ fn to_processed_records(records: Vec<RecordEntry>) -> (Vec<ProcessedRecord>, usi
                 records_without_text += 1;
                 error!(
                     key = %entry.key,
-                    finish_reason = entry.report.finish_reason.as_deref().unwrap_or("desconocido"),
+                    finish_reason = entry.usage.finish_reason.as_deref().unwrap_or("desconocido"),
                     "Registro sin texto extraído"
                 );
                 "...".to_string()
@@ -228,7 +228,7 @@ fn to_processed_records(records: Vec<RecordEntry>) -> (Vec<ProcessedRecord>, usi
             ProcessedRecord {
                 key: entry.key,
                 text,
-                report: entry.report,
+                usage: entry.usage,
             }
         })
         .collect();
