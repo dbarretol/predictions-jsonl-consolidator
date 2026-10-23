@@ -201,7 +201,8 @@ La consolidación vive en `src/pipeline/`, una etapa por archivo:
   `main.rs` decide dónde guardar la plantilla.
 
 Los exportadores (`src/exporters/`) generan el TXT, el MD y el CSV a partir de los
-registros resueltos.
+registros resueltos (`&[Record]`). Las decisiones de presentación viven ahí: el marcador
+`...` para registros sin texto (TXT y MD) y las columnas del CSV (`CsvRow`).
 
 ---
 Proyecto desarrollado como parte de un experimento en Rust.

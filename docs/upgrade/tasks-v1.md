@@ -362,8 +362,16 @@ terminaba con exit 0 y reportes vacíos, sin decir por qué.
   cambian (por última vez por esta causa), así que un `decisions.csv` generado antes de
   este cambio hay que regenerarlo. Agregar un campo nuevo a `Usage` (dato nuevo del
   formato) sí cambia la deduplicación, a propósito: es metadata distinta.
-- [ ] **9.14 Unificar `RecordEntry`/`ProcessedRecord`** y mover el placeholder `"..."` a
+- [x] **9.14 Unificar `RecordEntry`/`ProcessedRecord`** y mover el placeholder `"..."` a
   los exportadores TXT/MD.
+  Resuelto: se eliminó `ProcessedRecord`. `RecordEntry` es ahora `{ record: Record, line,
+  source_file }` (registro del dominio + procedencia) y los exportadores reciben
+  `&[Record]`. El marcador vive en `exporters/mod.rs` (`MISSING_TEXT_PLACEHOLDER` +
+  `display_text`); en `app.rs` quedan `into_sorted_records` y
+  `count_records_without_text` (log + conteo para el resumen). Verificado con el binario
+  anterior: consolidado, TXT, MD, CSV y resumen idénticos. Único cambio visible: el log
+  "Registro sin texto" sale en orden natural de key (antes, en el orden interno del
+  `HashMap` de deduplicación), así que ahora es reproducible.
 
 ### Tests / legibilidad
 
