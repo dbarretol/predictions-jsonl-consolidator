@@ -24,8 +24,10 @@ rust-project.json
 # End of https://www.toptal.com/developers/gitignore/api/rust,rust-analyzer
 
 ### Outputs generados por predictions-jsonl-consolidator ###
-# example/ y test_data/ se versionan como fixtures, pero lo que el binario
-# genera al correr sobre ellos (o sobre cualquier otra carpeta) no.
+# data/example/ y test_data/ se versionan como fixtures, pero lo que el binario
+# genera al correr sobre ellos (o sobre cualquier otra carpeta) no. Excepción:
+# data/example/output/, que guarda salidas de referencia con nombres fijos (ver el
+# test `example_outputs_are_up_to_date`).
 jsonl_extract/
 consolidated_*.jsonl
 decisions.csv

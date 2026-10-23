@@ -1,0 +1,4 @@
+# Salidas de referencia de data/example/output: se comparan byte a byte con lo que
+# genera el binario (test `example_outputs_are_up_to_date`), así que git no debe
+# convertir sus finales de línea al hacer checkout en Windows.
+data/example/output/** -text
