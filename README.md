@@ -61,10 +61,10 @@ cargo run --
 
 ```powershell
 # Uso automático en una carpeta:
-cargo run -- --dir ./data
+cargo run -- --dir "ruta a la carpeta"
 
 # Uso automático con un archivo:
-cargo run -- example/predictions.jsonl
+cargo run -- data/example/input/predictions.jsonl
 
 # uso recursivo
 cargo run -- -d "ruta a la carpeta" -r
@@ -134,6 +134,28 @@ En el resumen final, los duplicados exactos colapsados automáticamente se cuent
 "Duplicados eliminados"; los candidatos descartados por decisión explícita (`ignorar`
 en `decisions.csv`) se cuentan aparte, en "Descartados por decisión" (solo aparece si
 hubo al menos uno), ya que no son duplicados sino variantes que el usuario eligió no conservar.
+
+## Datos de ejemplo
+
+`data/example/` permite ver qué genera la herramienta sin ejecutarla:
+
+- `input/`: archivos JSONL de ejemplo (`predictions.jsonl` con datos reales de un batch
+  de Gemini y `prediction_dummy.jsonl`).
+- `output/`: lo que genera la herramienta para cada entrada, con nombres fijos:
+  `<nombre>.txt`, `<nombre>.md` y `<nombre>_tokens.csv`.
+
+Las salidas están versionadas y el test `example_outputs_are_up_to_date` exige que
+coincidan con lo que genera el binario actual, así que siempre están al día. Si un cambio
+modifica la salida a propósito, se regeneran y se revisa el diff:
+
+```powershell
+$env:UPDATE_EXAMPLES=1; cargo test --test cli example_outputs; Remove-Item Env:UPDATE_EXAMPLES
+```
+
+Para probar con un ejemplo nuevo, se agrega el `.jsonl` a `input/` y se regenera igual.
+`data/example/output/` está marcado como binario en `.gitattributes` para que git no
+convierta sus finales de línea en Windows; si lo hiciera, la comparación byte a byte del
+test fallaría.
 
 ## Tests
 
