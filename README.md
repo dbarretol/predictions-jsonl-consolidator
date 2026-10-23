@@ -154,6 +154,10 @@ conflictos de metadata, validez del CSV generado, el flujo completo de `--decisi
 `--no-keys`, y el exit code ≠ 0 con archivo ilegible en modo `--dir` (este último solo
 en Windows).
 
+Las líneas JSONL de los tests de integración se construyen en `tests/common/mod.rs` con
+`serde_json::json!`. Si el formato de entrada cambia, los tests se ajustan en ese único
+archivo, y los textos con comillas o saltos de línea se escapan correctamente.
+
 ## Estructura del CSV de Salida
 
 El archivo CSV generado contiene las siguientes columnas:

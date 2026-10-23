@@ -375,13 +375,34 @@ terminaba con exit 0 y reportes vacíos, sin decir por qué.
 
 ### Tests / legibilidad
 
-- [ ] **9.15 Fixtures por versión de formato** (`tests/fixtures/vertex_batch_v1/`) con test
+- [x] **9.15 Fixtures por versión de formato** (`tests/fixtures/vertex_batch_v1/`) con test
   de 0 errores de parseo; helper de líneas con `serde_json::json!` en `tests/common/`;
   tests unitarios del parser desde strings JSON en vez de structs armados a mano.
-- [ ] **9.16 Nombres**: `parser.rs` define el esquema de entrada; en `run` el mismo dato
+  Resuelto. Los fixtures y los tests del parser se cubrieron en 9.2: en vez de copiar
+  fixtures a `tests/fixtures/`, `all_repository_fixtures_parse_without_errors` usa
+  `include_str!` sobre `example/` y `test_data/`, que ya son los fixtures versionados.
+  Ahora, además, los constructores de líneas de los tests de integración están en
+  `tests/common/mod.rs` con `json!` (antes eran `format!` con llaves escapadas que se
+  rompían con un texto con comillas), con los mismos nombres más `line_failed`. Test
+  nuevo: `text_with_quotes_and_newlines_is_exported_verbatim`.
+- [x] **9.16 Nombres**: `parser.rs` define el esquema de entrada; en `run` el mismo dato
   cambia de nombre (`parse_errors` → `total_skipped` → `parse_errors`).
+  Resuelto: ambos casos desaparecieron con 9.2 (`parser.rs` → `input/`) y 9.12 (`run`
+  dividido). En la revisión final se corrigieron dos nombres que inducían a error:
+  `ReadOutcome.total_seen` (contaba registros válidos, siempre igual a `entries.len()`) se
+  eliminó, y `RunReport.lines_processed` pasó a `records_exported` (la etiqueta del
+  resumen, "Líneas procesadas", no cambia). El campo de diagnóstico `total_lines` del log
+  de debug pasó a `valid_records`.
 
 Orden sugerido: 9.1 → 9.2 (absorbe 9.3–9.8) → 9.9 → 9.10–9.14 → 9.15–9.16.
+
+**Cierre de la Fase 9** (2026-10-22): los 16 puntos resueltos. Con datos reales, la
+salida (consolidado, TXT, MD, CSV y resumen) es idéntica a la de `master` salvo por los
+cambios intencionales documentados en cada punto: dos columnas nuevas en el CSV
+(`Prompt Other Tokens` y `Finish Reason`, 9.6 y 9.8), el contador "Predicciones
+fallidas" (9.4), el corte con exit 1 cuando ninguna línea es válida (9.1), la nueva
+ubicación de `decisions.csv` con `--out-csv` (9.11) y los nuevos valores de
+`candidate_id` (9.9 y 9.13). Tests: de 22 a 41 (22 unitarios, 19 de integración).
 
 ---
 
