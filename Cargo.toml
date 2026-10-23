@@ -1,9 +1,17 @@
 [package]
 name = "predictions-jsonl-consolidator"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
+# Mínimo exigido por la edición 2024 y por las dependencias (clap, indicatif, assert_cmd).
+# El job `msrv` del CI lo verifica.
+rust-version = "1.85"
 description = "Consolida, deduplica y exporta (TXT/Markdown/CSV) archivos JSONL de predicciones"
 authors = ["dbarretol <57958754+dbarretol@users.noreply.github.com>"]
+license = "MIT"
+repository = "https://github.com/dbarretol/predictions-jsonl-consolidator"
+readme = "README.md"
+keywords = ["gemini", "vertex-ai", "jsonl", "batch-prediction", "ocr"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 anyhow = "1.0"

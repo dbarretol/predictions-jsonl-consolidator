@@ -1,5 +1,9 @@
 # Predictions JSONL Consolidator
 
+[![CI](https://github.com/dbarretol/predictions-jsonl-consolidator/actions/workflows/ci.yml/badge.svg)](https://github.com/dbarretol/predictions-jsonl-consolidator/actions/workflows/ci.yml)
+[![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
+![Rust 1.85+](https://img.shields.io/badge/rust-1.85%2B-orange.svg)
+
 Herramienta de línea de comandos en Rust que convierte los resultados de **predicciones
 batch de Gemini / Vertex AI** (archivos `.jsonl`) en documentos fáciles de leer y en un
 reporte de uso de tokens.
@@ -36,6 +40,7 @@ flowchart LR
 - [Datos de ejemplo](#datos-de-ejemplo)
 - [Arquitectura](#arquitectura)
 - [Desarrollo](#desarrollo)
+- [Licencia](#licencia)
 
 ## Inicio rápido
 
@@ -342,6 +347,14 @@ finales de línea en Windows y la comparación byte a byte sigue funcionando.
 
 El historial de decisiones de diseño y mejoras está en
 [`docs/upgrade/tasks-v1.md`](docs/upgrade/tasks-v1.md).
+
+El CI (GitHub Actions) ejecuta formato, clippy y tests en Windows y Linux en cada push a
+`main` y en cada pull request, y además comprueba que el proyecto compile y pase los tests
+con la versión mínima de Rust (1.85).
+
+## Licencia
+
+Distribuido bajo la licencia MIT. Ver [`LICENSE`](LICENSE).
 
 ---
 
