@@ -28,7 +28,8 @@ struct DecisionRow {
 /// reportan, como `responseId`.
 fn candidate_id(entry: &RecordEntry) -> String {
     // JSON con orden de campos fijo: una representación canónica del candidato.
-    let canonical = serde_json::to_string(&(&entry.key, &entry.text, &entry.usage))
+    let record = &entry.record;
+    let canonical = serde_json::to_string(&(&record.key, &record.text, &record.usage))
         .expect("key, texto y Usage siempre se pueden serializar");
     format!("{:016x}", fxhash::hash64(canonical.as_bytes()))
 }
@@ -77,9 +78,10 @@ impl PendingConflicts {
             )
         })?;
         for entry in self.groups.iter().flatten() {
+            let record = &entry.record;
             writer
                 .serialize(DecisionRow {
-                    key: entry.key.clone(),
+                    key: record.key.clone(),
                     candidate_id: candidate_id(entry),
                     source_file: entry
                         .source_file
@@ -87,11 +89,11 @@ impl PendingConflicts {
                         .and_then(|s| s.to_str())
                         .unwrap_or("")
                         .to_string(),
-                    model: entry.usage.model.clone().unwrap_or_default(),
-                    prompt_tokens: entry.usage.prompt_tokens,
-                    candidate_tokens: entry.usage.candidate_tokens,
-                    total_tokens: entry.usage.total_tokens,
-                    text_preview: text_preview(entry.text.as_deref().unwrap_or("")),
+                    model: record.usage.model.clone().unwrap_or_default(),
+                    prompt_tokens: record.usage.prompt_tokens,
+                    candidate_tokens: record.usage.candidate_tokens,
+                    total_tokens: record.usage.total_tokens,
+                    text_preview: text_preview(record.text.as_deref().unwrap_or("")),
                     decision: String::new(),
                 })
                 .map_err(|source| {
@@ -130,7 +132,7 @@ pub(super) fn apply_decisions(
     for group in conflict_groups {
         // Clonamos solo la key (por si el grupo queda sin resolver); los candidatos
         // conservados se mueven directo a `resolved_records`, sin clonar cada uno.
-        let group_key = group[0].key.clone();
+        let group_key = group[0].record.key.clone();
         let group_size = group.len();
         let mut kept: Vec<RecordEntry> = group
             .into_iter()

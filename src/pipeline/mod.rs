@@ -18,19 +18,15 @@ pub use decisions::PendingConflicts;
 pub use discovery::find_jsonl_files;
 
 use crate::errors::{AppError, Result};
-use crate::models::Usage;
+use crate::models::Record;
 use std::path::{Path, PathBuf};
 
-/// Un registro leído junto con su origen: la línea cruda (para el
+/// Un registro leído junto con su procedencia: la línea cruda (para el
 /// `consolidated_*.jsonl`) y el archivo del que salió (para `decisions.csv`).
 #[derive(Debug, Clone)]
 pub struct RecordEntry {
-    pub key: String,
+    pub record: Record,
     pub line: String,
-    /// Texto extraído de la respuesta; `None` si el registro no tiene texto (ver
-    /// `models::Record`), para distinguir eso de un texto vacío real.
-    pub text: Option<String>,
-    pub usage: Usage,
     pub source_file: PathBuf,
 }
 
@@ -127,14 +123,18 @@ pub fn deduplicate_files(
 /// Construye un `RecordEntry` mínimo para los tests unitarios de las etapas.
 #[cfg(test)]
 fn test_entry(key: &str, text: Option<&str>, model: &str, line: &str) -> RecordEntry {
+    use crate::models::Usage;
+
     RecordEntry {
-        key: key.to_string(),
-        line: line.to_string(),
-        text: text.map(String::from),
-        usage: Usage {
-            model: Some(model.to_string()),
-            ..Usage::default()
+        record: Record {
+            key: key.to_string(),
+            text: text.map(String::from),
+            usage: Usage {
+                model: Some(model.to_string()),
+                ..Usage::default()
+            },
         },
+        line: line.to_string(),
         source_file: PathBuf::from("test.jsonl"),
     }
 }

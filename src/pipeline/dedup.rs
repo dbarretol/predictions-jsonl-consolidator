@@ -15,7 +15,7 @@ pub(super) struct Collapsed {
 /// debe pedir una decisión al usuario, ya que en `decisions.csv` los candidatos se
 /// verían idénticos.
 fn is_exact_duplicate(a: &RecordEntry, b: &RecordEntry) -> bool {
-    a.text == b.text && a.usage == b.usage
+    a.record.text == b.record.text && a.record.usage == b.record.usage
 }
 
 /// Agrupa por (key, hash del texto): dos registros con la misma key y el mismo texto
@@ -25,8 +25,9 @@ fn is_exact_duplicate(a: &RecordEntry, b: &RecordEntry) -> bool {
 pub(super) fn collapse_exact_duplicates(entries: Vec<RecordEntry>) -> Collapsed {
     let mut groups: FxHashMap<(String, u64), Vec<RecordEntry>> = FxHashMap::default();
     for entry in entries {
-        let text_hash = fxhash::hash64(entry.text.as_deref().unwrap_or("").as_bytes());
-        let group = groups.entry((entry.key.clone(), text_hash)).or_default();
+        let record = &entry.record;
+        let text_hash = fxhash::hash64(record.text.as_deref().unwrap_or("").as_bytes());
+        let group = groups.entry((record.key.clone(), text_hash)).or_default();
         if !group.iter().any(|kept| is_exact_duplicate(kept, &entry)) {
             group.push(entry);
         }

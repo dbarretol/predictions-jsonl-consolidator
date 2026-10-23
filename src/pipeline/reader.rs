@@ -182,10 +182,8 @@ fn process_line(file_path: &Path, line_number: usize, line: &str, acc: &mut Read
         Ok(LineOutcome::Record(record)) => {
             acc.total_seen += 1;
             acc.entries.push(RecordEntry {
-                key: record.key,
+                record,
                 line: line.to_string(),
-                text: record.text,
-                usage: record.usage,
                 source_file: file_path.to_path_buf(),
             });
         }
