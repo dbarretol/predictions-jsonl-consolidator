@@ -587,6 +587,15 @@ fn example_outputs_are_up_to_date() {
     let output_dir = root.join("output");
     let update = std::env::var_os("UPDATE_EXAMPLES").is_some();
     let generated_dir = tempdir().unwrap();
+    let list_dir = |dir: &Path| -> Vec<PathBuf> {
+        let mut entries: Vec<PathBuf> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        entries.sort();
+        entries
+    };
+    let input_before = list_dir(&input_dir);
 
     let mut inputs: Vec<PathBuf> = fs::read_dir(&input_dir)
         .unwrap()
@@ -634,7 +643,8 @@ fn example_outputs_are_up_to_date() {
          intencional, regenerarlas con `UPDATE_EXAMPLES=1 cargo test --test cli \
          example_outputs` y revisar el diff"
     );
-    // Con las tres salidas personalizadas, la carpeta de entrada no se toca.
-    assert!(!input_dir.join("jsonl_extract").exists());
-    assert!(!input_dir.join("decisions.csv").exists());
+    // Con las tres salidas personalizadas, la carpeta de entrada no se toca. Se compara
+    // contra su contenido previo (y no contra "no existe jsonl_extract/") porque el
+    // README invita a correr la herramienta sobre estos ejemplos, lo que lo crea ahí.
+    assert_eq!(list_dir(&input_dir), input_before);
 }
