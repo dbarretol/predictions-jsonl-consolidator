@@ -289,8 +289,8 @@ mod tests {
     #[test]
     fn all_repository_fixtures_parse_without_errors() {
         let fixtures = [
-            include_str!("../../example/predictions.jsonl"),
-            include_str!("../../example/prediction_dummy.jsonl"),
+            include_str!("../../data/example/input/predictions.jsonl"),
+            include_str!("../../data/example/input/prediction_dummy.jsonl"),
             include_str!("../../test_data/file1.jsonl"),
             include_str!("../../test_data/file2.jsonl"),
         ];

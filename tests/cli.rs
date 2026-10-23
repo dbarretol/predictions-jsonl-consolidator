@@ -575,33 +575,66 @@ fn unreadable_file_in_dir_mode_reports_and_fails() {
     drop(_lock);
 }
 
+/// `data/example/` sirve para revisar a mano qué genera la herramienta: cada
+/// `input/<nombre>.jsonl` tiene sus salidas versionadas en `output/` (`<nombre>.txt`,
+/// `<nombre>.md`, `<nombre>_tokens.csv`). Este test las regenera y exige que coincidan,
+/// para que nunca queden desactualizadas. Tras un cambio intencional en la salida:
+/// `UPDATE_EXAMPLES=1 cargo test --test cli example_outputs` (y revisar el diff).
 #[test]
-fn example_fixture_processes_successfully() {
-    let example_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("example/predictions.jsonl");
-    let out_dir = tempdir().unwrap();
+fn example_outputs_are_up_to_date() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("data/example");
+    let input_dir = root.join("input");
+    let output_dir = root.join("output");
+    let update = std::env::var_os("UPDATE_EXAMPLES").is_some();
+    let generated_dir = tempdir().unwrap();
 
-    cmd()
-        .arg(&example_path)
-        .arg("--quiet")
-        .arg("--out-txt")
-        .arg(out_dir.path().join("out.txt"))
-        .arg("--out-md")
-        .arg(out_dir.path().join("out.md"))
-        .arg("--out-csv")
-        .arg(out_dir.path().join("out.csv"))
-        .assert()
-        .success();
-
-    assert!(out_dir.path().join("out.txt").exists());
-    assert!(out_dir.path().join("out.md").exists());
-    assert!(out_dir.path().join("out.csv").exists());
-    // No debe haberse creado jsonl_extract junto al fixture real: las tres rutas
-    // de salida eran personalizadas.
+    let mut inputs: Vec<PathBuf> = fs::read_dir(&input_dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("jsonl"))
+        .collect();
+    inputs.sort();
     assert!(
-        !example_path
-            .parent()
-            .unwrap()
-            .join("jsonl_extract")
-            .exists()
+        !inputs.is_empty(),
+        "no hay ejemplos en {}",
+        input_dir.display()
     );
+
+    let mut outdated = Vec::new();
+    for input in &inputs {
+        let name = input.file_stem().unwrap().to_string_lossy();
+        let outputs = [
+            ("--out-txt", format!("{name}.txt")),
+            ("--out-md", format!("{name}.md")),
+            ("--out-csv", format!("{name}_tokens.csv")),
+        ];
+
+        let mut command = cmd();
+        command.arg(input).arg("--quiet");
+        for (flag, file) in &outputs {
+            command.arg(flag).arg(generated_dir.path().join(file));
+        }
+        command.assert().success();
+
+        for (_, file) in &outputs {
+            let generated = fs::read(generated_dir.path().join(file)).unwrap();
+            let expected_path = output_dir.join(file);
+            if update {
+                fs::create_dir_all(&output_dir).unwrap();
+                fs::write(&expected_path, &generated).unwrap();
+            } else if fs::read(&expected_path).ok().as_deref() != Some(generated.as_slice()) {
+                outdated.push(expected_path.display().to_string());
+            }
+        }
+    }
+
+    assert!(
+        outdated.is_empty(),
+        "salidas de ejemplo desactualizadas o faltantes: {outdated:?}. Si el cambio es \
+         intencional, regenerarlas con `UPDATE_EXAMPLES=1 cargo test --test cli \
+         example_outputs` y revisar el diff"
+    );
+    // Con las tres salidas personalizadas, la carpeta de entrada no se toca.
+    assert!(!input_dir.join("jsonl_extract").exists());
+    assert!(!input_dir.join("decisions.csv").exists());
 }
