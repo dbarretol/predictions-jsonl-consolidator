@@ -1,5 +1,5 @@
 use crate::errors::{AppError, Result};
-use crate::models::ProcessedRecord;
+use crate::models::Record;
 use serde::Serialize;
 use std::path::Path;
 
@@ -30,8 +30,8 @@ struct CsvRow<'a> {
     finish_reason: Option<&'a str>,
 }
 
-impl<'a> From<&'a ProcessedRecord> for CsvRow<'a> {
-    fn from(record: &'a ProcessedRecord) -> Self {
+impl<'a> From<&'a Record> for CsvRow<'a> {
+    fn from(record: &'a Record) -> Self {
         let usage = &record.usage;
         CsvRow {
             key: &record.key,
@@ -49,7 +49,7 @@ impl<'a> From<&'a ProcessedRecord> for CsvRow<'a> {
     }
 }
 
-pub fn write_csv(path: &Path, records: &[ProcessedRecord]) -> Result<()> {
+pub fn write_csv(path: &Path, records: &[Record]) -> Result<()> {
     // Ruta absoluta (`::csv`) para no ambiguar con este propio módulo `exporters::csv`.
     let mut writer = ::csv::Writer::from_path(path).map_err(|source| {
         AppError::csv(
