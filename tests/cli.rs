@@ -1,4 +1,7 @@
+mod common;
+
 use assert_cmd::Command;
+use common::{line, line_failed, line_full, line_rerun, line_without_text};
 use predicates::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -6,22 +9,6 @@ use tempfile::tempdir;
 
 fn cmd() -> Command {
     Command::cargo_bin("predictions-jsonl-consolidator").unwrap()
-}
-
-fn line(key: &str, text: &str) -> String {
-    line_full(key, text, "model-a", 1)
-}
-
-fn line_full(key: &str, text: &str, model: &str, tokens: u32) -> String {
-    format!(
-        r#"{{"key": "{key}", "response": {{"candidates": [{{"content": {{"parts": [{{"text": "{text}"}}]}}}}], "modelVersion": "{model}", "usageMetadata": {{"promptTokenCount": {tokens}, "candidatesTokenCount": {tokens}, "totalTokenCount": {tokens}}}}}}}"#
-    )
-}
-
-fn line_without_text(key: &str) -> String {
-    format!(
-        r#"{{"key": "{key}", "response": {{"candidates": [], "modelVersion": "model-a", "usageMetadata": {{"promptTokenCount": 1, "candidatesTokenCount": 0, "totalTokenCount": 1}}}}}}"#
-    )
 }
 
 /// Encuentra el único archivo con extensión `ext` dentro de `dir` (los nombres de
@@ -60,6 +47,31 @@ fn single_file_produces_txt_md_csv() {
 }
 
 #[test]
+fn text_with_quotes_and_newlines_is_exported_verbatim() {
+    let dir = tempdir().unwrap();
+    let input = dir.path().join("preds.jsonl");
+    let text = "Dijo \"hola\"
+en dos líneas";
+    fs::write(
+        &input,
+        format!(
+            "{}
+",
+            line("item-1", text)
+        ),
+    )
+    .unwrap();
+
+    cmd().arg(&input).arg("--quiet").assert().success();
+
+    let extract_dir = dir.path().join("jsonl_extract");
+    let txt = fs::read_to_string(find_file_with_ext(&extract_dir, "txt")).unwrap();
+    assert!(txt.contains(text), "{txt}");
+    let md = fs::read_to_string(find_file_with_ext(&extract_dir, "md")).unwrap();
+    assert!(md.contains(text), "{md}");
+}
+
+#[test]
 fn multi_file_dedup_removes_exact_duplicates() {
     let dir = tempdir().unwrap();
     fs::write(
@@ -85,19 +97,6 @@ fn multi_file_dedup_removes_exact_duplicates() {
     let consolidated = find_file_with_ext(dir.path(), "jsonl");
     let content = fs::read_to_string(consolidated).unwrap();
     assert_eq!(content.lines().count(), 1);
-}
-
-/// Línea como la que produce re-ejecutar el mismo prompt: mismo texto y tokens, pero
-/// distinto `responseId` y distinto orden en `promptTokensDetails`.
-fn line_rerun(key: &str, text: &str, response_id: &str, image_first: bool) -> String {
-    let details = if image_first {
-        r#"[{"modality": "IMAGE", "tokenCount": 10}, {"modality": "TEXT", "tokenCount": 5}]"#
-    } else {
-        r#"[{"modality": "TEXT", "tokenCount": 5}, {"modality": "IMAGE", "tokenCount": 10}]"#
-    };
-    format!(
-        r#"{{"key": "{key}", "response": {{"responseId": "{response_id}", "candidates": [{{"content": {{"parts": [{{"text": "{text}"}}]}}}}], "modelVersion": "model-a", "usageMetadata": {{"promptTokenCount": 15, "promptTokensDetails": {details}, "candidatesTokenCount": 1, "totalTokenCount": 16}}}}}}"#
-    )
 }
 
 #[test]
@@ -173,7 +172,7 @@ fn corrupt_line_is_counted_and_skipped_without_failing() {
 fn failed_prediction_is_counted_apart_from_parse_errors() {
     let dir = tempdir().unwrap();
     let input = dir.path().join("preds.jsonl");
-    let failed = r#"{"key": "item-2", "status": "Bad Request: imagen inválida"}"#;
+    let failed = line_failed("item-2", "Bad Request: imagen inválida");
     fs::write(
         &input,
         format!("{}\n{}\n", line("item-1", "Hola mundo"), failed),
