@@ -4,7 +4,7 @@
 use crate::cli::Args;
 use crate::errors::AppError;
 use crate::exporters;
-use crate::models::ProcessedRecord;
+use crate::models::Record;
 use crate::pipeline::{
     Deduplication, DeduplicationStats, PendingConflicts, RecordEntry, deduplicate_files,
     find_jsonl_files,
@@ -39,7 +39,8 @@ pub fn run(args: Args, timestamp: &str) -> Result<()> {
     let outputs = OutputPaths::resolve(&args, &inputs.base_dir, timestamp);
     outputs.create_parent_dirs()?;
 
-    let (records, records_without_text) = to_processed_records(outcome.records);
+    let records = into_sorted_records(outcome.records);
+    let records_without_text = count_records_without_text(&records);
     exporters::txt::write_txt(&outputs.txt, &records, !args.no_keys)?;
     exporters::md::write_md(&outputs.md, &records)?;
     exporters::csv::write_csv(&outputs.csv, &records)?;
@@ -149,7 +150,7 @@ fn write_consolidated(
     timestamp: &str,
 ) -> Result<PathBuf> {
     let mut sorted: Vec<&RecordEntry> = records.iter().collect();
-    sorted.sort_by(|a, b| natord::compare(&a.key, &b.key));
+    sorted.sort_by(|a, b| natord::compare(&a.record.key, &b.record.key));
 
     let path = base_dir.join(format!("consolidated_{}.jsonl", timestamp));
     let mut file = File::create(&path).with_context(|| {
@@ -208,32 +209,28 @@ impl OutputPaths {
     }
 }
 
-/// Convierte los registros resueltos a la forma que esperan los exportadores, en orden
-/// natural de key. Los registros ya vienen parseados desde `deduplicate_files` (una sola
-/// pasada de JSON por línea). Devuelve también cuántos no tenían texto.
-fn to_processed_records(records: Vec<RecordEntry>) -> (Vec<ProcessedRecord>, usize) {
-    let mut records_without_text = 0usize;
-    let mut processed: Vec<ProcessedRecord> = records
-        .into_iter()
-        .map(|entry| {
-            let text = entry.text.unwrap_or_else(|| {
-                records_without_text += 1;
-                error!(
-                    key = %entry.key,
-                    finish_reason = entry.usage.finish_reason.as_deref().unwrap_or("desconocido"),
-                    "Registro sin texto extraído"
-                );
-                "...".to_string()
-            });
-            ProcessedRecord {
-                key: entry.key,
-                text,
-                usage: entry.usage,
-            }
-        })
-        .collect();
-    processed.sort_by(|a, b| natord::compare(&a.key, &b.key));
-    (processed, records_without_text)
+/// Separa los registros de su procedencia (línea cruda y archivo de origen, que solo
+/// usan el consolidado y `decisions.csv`) y los ordena por key en orden natural, como
+/// los esperan los exportadores.
+fn into_sorted_records(entries: Vec<RecordEntry>) -> Vec<Record> {
+    let mut records: Vec<Record> = entries.into_iter().map(|entry| entry.record).collect();
+    records.sort_by(|a, b| natord::compare(&a.key, &b.key));
+    records
+}
+
+/// Registra en el log cada registro sin texto, con su `finish_reason`, y devuelve
+/// cuántos son. En el TXT y el MD aparecen con un marcador (ver `exporters`).
+fn count_records_without_text(records: &[Record]) -> usize {
+    let mut count = 0;
+    for record in records.iter().filter(|r| r.text.is_none()) {
+        error!(
+            key = %record.key,
+            finish_reason = record.usage.finish_reason.as_deref().unwrap_or("desconocido"),
+            "Registro sin texto extraído"
+        );
+        count += 1;
+    }
+    count
 }
 
 /// Todo lo que se informa al final de una corrida exitosa.

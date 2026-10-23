@@ -1,7 +1,8 @@
 use serde::Serialize;
 
 /// Una predicción ya interpretada, independiente del formato del JSONL de origen
-/// (la conversión vive en `input`).
+/// (la conversión vive en `input`). Es lo que reciben los exportadores.
+#[derive(Debug, Clone)]
 pub struct Record {
     pub key: String,
     /// `None` si la respuesta no trae texto (ej. corte por `MAX_TOKENS`), para
@@ -35,11 +36,4 @@ pub struct Usage {
     /// Motivo de fin de la respuesta (ej. `STOP`, `MAX_TOKENS`): explica por qué un
     /// registro puede no tener texto.
     pub finish_reason: Option<String>,
-}
-
-#[derive(Clone)]
-pub struct ProcessedRecord {
-    pub key: String,
-    pub text: String,
-    pub usage: Usage,
 }
