@@ -74,11 +74,12 @@ pub fn deduplicate_files(
     show_progress: bool,
 ) -> Result<Deduplication> {
     let read = reader::read_files(files, show_progress);
+    let valid_records = read.entries.len();
 
     // Si hubo líneas pero ninguna se pudo interpretar, lo más probable es que haya
     // cambiado el formato del JSONL: se corta acá, antes de generar reportes vacíos
     // que pasarían por un resultado válido.
-    if let (0, Some(first_error)) = (read.total_seen, read.first_parse_error) {
+    if let (0, Some(first_error)) = (valid_records, read.first_parse_error) {
         return Err(AppError::NoValidRecords {
             parse_errors: read.parse_errors,
             file: first_error.file,
@@ -103,8 +104,7 @@ pub fn deduplicate_files(
     };
 
     // Lo que no sobrevivió ni se descartó por decisión explícita es un duplicado exacto.
-    let duplicates_removed = read
-        .total_seen
+    let duplicates_removed = valid_records
         .saturating_sub(resolved.len())
         .saturating_sub(discarded_by_decision);
 

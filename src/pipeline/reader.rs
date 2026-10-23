@@ -22,7 +22,6 @@ pub(super) struct ParseFailure {
 pub(super) struct ReadOutcome {
     /// Registros válidos en orden de lectura (archivo por archivo, línea por línea).
     pub entries: Vec<RecordEntry>,
-    pub total_seen: usize,
     pub parse_errors: usize,
     pub failed_predictions: usize,
     pub unreadable_files: Vec<PathBuf>,
@@ -52,7 +51,6 @@ impl ReadOutcome {
     // conservar su error mantiene el orden de lectura y "el primero" en ese orden.
     fn merge(mut self, other: Self) -> Self {
         self.entries.extend(other.entries);
-        self.total_seen += other.total_seen;
         self.parse_errors += other.parse_errors;
         self.failed_predictions += other.failed_predictions;
         self.unreadable_files.extend(other.unreadable_files);
@@ -90,10 +88,11 @@ pub(super) fn read_files(files: &[PathBuf], show_progress: bool) -> ReadOutcome 
     progress.finish_and_clear();
 
     let elapsed = started_at.elapsed();
-    let throughput = outcome.total_seen as f64 / elapsed.as_secs_f64().max(0.001);
+    let valid_records = outcome.entries.len();
+    let throughput = valid_records as f64 / elapsed.as_secs_f64().max(0.001);
     debug!(
         total_files = files.len(),
-        total_lines = outcome.total_seen,
+        valid_records,
         elapsed_ms = elapsed.as_millis(),
         throughput_lineas_por_seg = format!("{:.1}", throughput),
         "Consolidación completada"
@@ -180,7 +179,6 @@ fn read_file(file_path: &Path, progress: &ProgressBar, acc: &mut ReadOutcome) {
 fn process_line(file_path: &Path, line_number: usize, line: &str, acc: &mut ReadOutcome) {
     match input::parse_line(line) {
         Ok(LineOutcome::Record(record)) => {
-            acc.total_seen += 1;
             acc.entries.push(RecordEntry {
                 record,
                 line: line.to_string(),

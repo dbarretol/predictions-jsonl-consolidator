@@ -48,7 +48,7 @@ pub fn run(args: Args, timestamp: &str) -> Result<()> {
 
     let report = RunReport {
         files_found: inputs.files.len(),
-        lines_processed: records.len(),
+        records_exported: records.len(),
         records_without_text,
         stats: outcome.stats,
         generated_files,
@@ -236,7 +236,8 @@ fn count_records_without_text(records: &[Record]) -> usize {
 /// Todo lo que se informa al final de una corrida exitosa.
 struct RunReport {
     files_found: usize,
-    lines_processed: usize,
+    /// Se muestra como "Líneas procesadas": registros que llegaron a los reportes.
+    records_exported: usize,
     records_without_text: usize,
     stats: DeduplicationStats,
     generated_files: Vec<PathBuf>,
@@ -255,7 +256,7 @@ impl RunReport {
             "  Archivos ilegibles:         {}",
             stats.unreadable_files.len()
         );
-        println!("  Líneas procesadas:          {}", self.lines_processed);
+        println!("  Líneas procesadas:          {}", self.records_exported);
         println!("  Líneas con error de parseo: {}", stats.parse_errors);
         println!("  Predicciones fallidas:      {}", stats.failed_predictions);
         println!("  Duplicados eliminados:      {}", stats.duplicates_removed);
