@@ -23,9 +23,9 @@ struct DecisionRow {
 
 /// Identificador estable del candidato entre corridas, usado para enlazar
 /// `decisions.csv` con el candidato que describe. Se deriva de key + texto + `Usage`,
-/// el mismo criterio que define un duplicado exacto: así no depende de cuál de varias líneas equivalentes quedó como
-/// representante del grupo (eso varía con el orden de lectura) ni de campos que no se
-/// reportan, como `responseId`.
+/// el mismo criterio que define un duplicado exacto: así no depende de cuál de varias
+/// líneas equivalentes quedó como representante del grupo (eso varía con el orden de
+/// lectura) ni de campos que no se reportan, como `responseId`.
 fn candidate_id(entry: &RecordEntry) -> String {
     // JSON con orden de campos fijo: una representación canónica del candidato.
     let record = &entry.record;
